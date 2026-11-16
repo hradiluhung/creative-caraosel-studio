@@ -14,14 +14,16 @@ import { useObjectUrl } from "@/lib/useObjectUrl";
 import { Button, Dialog, FloatingMenu, IconButton, TextInput } from "../ui/primitives";
 import { saveProjectAsTemplate } from "@/templates";
 import { cn } from "@/lib/cn";
+import { AssetLibrary } from "./AssetLibrary";
 import { BrandKits } from "./BrandKits";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { TemplateLibrary } from "./TemplateLibrary";
 
-type Tab = "projects" | "templates" | "brand";
+type Tab = "projects" | "templates" | "assets" | "brand";
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "projects", label: "Projects" },
   { id: "templates", label: "Templates" },
+  { id: "assets", label: "Assets" },
   { id: "brand", label: "Brand kits" },
 ];
 
@@ -155,6 +157,7 @@ export function Dashboard() {
           </p>
         )}
         {tab === "templates" && <TemplateLibrary />}
+        {tab === "assets" && <AssetLibrary />}
         {tab === "brand" && <BrandKits />}
         {tab === "projects" && (
         <>

@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRight, Circle, Film, Hexagon, ImagePlus, Minus, Square, Star, Triangle, X } from "lucide-react";
+import { ArrowRight, Circle, Film, Hexagon, ImagePlus, Library, Minus, Square, Star, Triangle, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SHAPE_LABELS } from "@/document/factory";
 import { getSurface } from "@/document/geometry";
+import { clampLayoutCount, LAYOUT_KINDS, LAYOUT_LABELS, layoutBoxes, MAX_LAYOUT_COUNT, MIN_LAYOUT_COUNT } from "@/document/layouts";
 import { addAssetRef, setBackground } from "@/document/operations";
 import { isAudioAsset, isVideoAsset, type AssetRef, type Background, type OverlayKind, type ShapeKind } from "@/document/schema";
 import { formatSeconds } from "@/document/timing";
@@ -15,8 +16,9 @@ import { VIDEO_ACCEPT_ATTR } from "@/persistence/video";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { Button, ColorField, IconButton, Label, NumberField, Segmented, Select } from "../ui/primitives";
-import { importImages, importVideos, insertAsset, insertOverlay, insertShape, insertSticker, insertStyledText, insertText } from "./actions";
+import { applyLayout, importImages, importVideos, insertAsset, insertOverlay, insertShape, insertSticker, insertStyledText, insertText } from "./actions";
 import { ColorControl } from "./ColorControl";
+import { LibraryPicker } from "./LibraryPicker";
 
 const SHAPES: Array<{ kind: ShapeKind; icon: ReactNode }> = [
   { kind: "rect", icon: <Square /> },
@@ -238,10 +240,67 @@ function BrandLogo({ logo, onLoaded }: { logo: AssetRef; onLoaded: () => void })
   );
 }
 
+const LAYOUT_PREVIEW = { x: 0, y: 0, width: 40, height: 50 };
+
+/** Photo frame layouts for the slide in view: new empty frames, or the selected photos rearranged. */
+function LayoutsSection() {
+  const [count, setCount] = useState(4);
+  const [gap, setGap] = useState(16);
+  const arranging = useEditorStore((s) => {
+    if (!s.project || s.selection.length < MIN_LAYOUT_COUNT) return 0;
+    const selected = new Set(s.selection);
+    const surface = getSurface(s.project, s.activeSurfaceId);
+    return surface?.elements.filter((el) => selected.has(el.id) && !el.locked && (el.type === "image" || el.type === "video")).length ?? 0;
+  });
+  const rearrange = arranging >= MIN_LAYOUT_COUNT;
+  const shown = rearrange ? arranging : count;
+  return (
+    <Section title="Layouts">
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField label="Frames" prefix="#" value={shown} onChange={(v) => setCount(clampLayoutCount(v))} min={MIN_LAYOUT_COUNT} max={MAX_LAYOUT_COUNT} disabled={rearrange} />
+        <NumberField label="Gap" prefix="↔" value={gap} onChange={setGap} min={0} max={200} />
+      </div>
+      <div className="grid grid-cols-7 gap-1 md:grid-cols-4" data-testid="layout-options">
+        {LAYOUT_KINDS.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            title={LAYOUT_LABELS[kind]}
+            aria-label={`${rearrange ? "Arrange selected photos as" : "Add photo frames as"} ${LAYOUT_LABELS[kind].toLowerCase()}`}
+            data-layout={kind}
+            onClick={() => applyLayout(kind, count, gap)}
+            className="flex aspect-square items-center justify-center rounded-[5px] border border-line p-1.5 hover:border-line-strong hover:bg-sunken"
+          >
+            <svg viewBox="-2 -2 44 54" className="h-full w-full" aria-hidden>
+              {layoutBoxes(kind, Math.min(shown, 9), LAYOUT_PREVIEW, { gap: 2 }).map((b, i) => (
+                <rect
+                  key={i}
+                  x={b.x}
+                  y={b.y}
+                  width={b.width}
+                  height={b.height}
+                  rx={1}
+                  transform={b.rotation ? `rotate(${b.rotation} ${b.x} ${b.y})` : undefined}
+                  className="fill-sunken stroke-ink"
+                  strokeWidth={1}
+                />
+              ))}
+            </svg>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted" data-testid="layout-hint">
+        {rearrange ? `Rearranges the ${arranging} selected photos on this slide.` : "Adds empty photo frames to this slide. Select two or more photos first to rearrange them instead."}
+      </p>
+    </Section>
+  );
+}
+
 export function InsertPanel({ images }: { images: ImageStore }) {
   const assets = useEditorStore((s) => s.project?.assets);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const videoRef = useRef<HTMLInputElement>(null);
   const [videoBusy, setVideoBusy] = useState(false);
@@ -313,6 +372,10 @@ export function InsertPanel({ images }: { images: ImageStore }) {
         <Button className="w-full" disabled={busy} onClick={() => fileRef.current?.click()}>
           <ImagePlus className="h-4 w-4" /> {busy ? "Importing…" : "Upload images"}
         </Button>
+        <Button className="w-full" variant="ghost" onClick={() => setLibraryOpen(true)}>
+          <Library className="h-4 w-4" /> From library
+        </Button>
+        {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}
         <p className="text-[11px] text-muted">JPG, PNG or WebP. On desktop you can also drop files on the canvas.</p>
         {errors.length > 0 && (
           <ul role="alert" className="space-y-1 text-xs text-danger">
@@ -390,6 +453,8 @@ export function InsertPanel({ images }: { images: ImageStore }) {
           </div>
         )}
       </Section>
+
+      <LayoutsSection />
 
       <Section title="Stickers">
         <div className="grid grid-cols-6 gap-1 md:grid-cols-4">

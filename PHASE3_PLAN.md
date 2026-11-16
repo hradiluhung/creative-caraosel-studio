@@ -6,7 +6,7 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 
 ## State before Phase 3
 
-- Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
+- Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 14).
 - Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (102 tests),
   `npm run test:e2e` (36 + 28 + 127 browser checks; headers of `tests/e2e*.mjs` explain the setup).
 - Document schema was version 2. C1 bumped it to 3, C2 to 4 and C4 to 5, each with a migration in

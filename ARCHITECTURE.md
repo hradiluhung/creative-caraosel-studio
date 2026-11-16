@@ -121,6 +121,7 @@ IndexedDB database `creative-carousel-studio` (via `idb`):
 | `projectMeta` | name, size, slide count, dates, cover thumbnail (dashboard)    |
 | `projectDocs` | the full document JSON                                         |
 | `assets`      | original image files as Blobs, shared between projects by id   |
+| `projectVersions` | earlier states of a project (Phase 4, database version 3)  |
 
 - Autosave is debounced (700 ms), serialized, and never blocks editing. Pending changes are flushed
   on `visibilitychange`/`pagehide`, the last reliable moment before iOS suspends a PWA.
@@ -335,7 +336,27 @@ content, duration, sound track, fallback) and background music (import, waveform
 the exported sound). `tests/perf-playback.mjs` is a
 rough smoothness measurement for a slow phone.
 
-## 13. Known limitations (honest list)
+## 13. Phase 4: advanced features (in progress)
+
+`PHASE4_PLAN.md` is the working plan and progress log. Done so far: **D1 project version history, D2 asset library, D3 layouts.**
+
+- **Version history is local and document-only.** A version is the whole document JSON plus a
+  thumbnail in the `projectVersions` store (database version 3). Documents are small because they
+  only reference assets; what history really costs is that referenced assets stay stored.
+- The rules are pure (`src/document/history.ts`): unnamed versions are pruned to the newest 20,
+  named ones are kept; an automatic version is made on open and at most every ten minutes of editing.
+- Restoring is a normal document change through `commit()` (undoable), and the state it replaces
+  is saved first, so a restore can never lose work.
+- Versions are opened through `parseProject`, like projects, so they survive schema changes.
+- **The asset library is a view, not a new store.** Assets were already shared between projects by
+  id; `listLibrary` adds usage (projects, templates, brand kits, versions) and the pure rules live in
+  `src/persistence/libraryModel.ts`. Favorites and collections are optional fields on the stored
+  asset and never enter a document. "From library" adds an `AssetRef` to the project, no copy.
+- **Layouts are pure geometry** (`src/document/layouts.ts`): a kind, a count and an area give boxes.
+  The editor turns boxes into placeholder image elements or moves the selected photos into them;
+  the layout itself is not stored, the result is ordinary elements.
+
+## 14. Known limitations (honest list)
 
 - **Video (Phase 3):** import was confirmed on an iPhone; playback smoothness there, the timeline, MP4
   export, music and preview proxies were only verified in desktop Chrome. No filters on video. On iOS the preview ignores volume and fades (the export applies

@@ -1,7 +1,8 @@
 /** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
-import { createImage, createOverlay, createShape, createSticker, createText, createVideo, placementFor, type Placement, type TextPreset } from "@/document/factory";
+import { createImage, createOverlay, createPlaceholder, createShape, createSticker, createText, createVideo, placementFor, type Placement, type TextPreset } from "@/document/factory";
 import { getSurface, rotatedBounds } from "@/document/geometry";
 import { createId } from "@/document/ids";
+import { assignBoxes, layoutArea, layoutBoxes, MIN_LAYOUT_COUNT, type LayoutKind } from "@/document/layouts";
 import { addAssetRef, addElements, setSlideAudio, setSlideDuration, splitVideo, updateElements } from "@/document/operations";
 import { isVideoAsset, type AssetRef, type AudioTrack, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
 import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
@@ -74,6 +75,18 @@ const elementFor = (asset: AssetRef, p: Placement) => (isVideoAsset(asset) ? cre
 export function insertAsset(asset: AssetRef) {
   const p = currentPlacement();
   if (p) store().addElement(elementFor(asset, p));
+}
+
+/** Place an asset that is stored on this device but may not belong to this project yet (one undo step). */
+export function insertLibraryAsset(asset: AssetRef) {
+  const p = currentPlacement();
+  if (!p) return;
+  const { id, name, mime, width, height, size, duration } = asset;
+  const ref: AssetRef = { id, name, mime, width, height, size, ...(duration !== undefined ? { duration } : {}) };
+  const el = elementFor(ref, p);
+  const s = store();
+  s.commit((project) => addElements(addAssetRef(project, ref), s.activeSurfaceId, [el]));
+  s.select([el.id]);
 }
 
 /** Import files with the given importer, register them in the project and place them on the canvas. */
@@ -191,4 +204,35 @@ export function updateMusic(patch: Partial<AudioTrack> | null, coalesce?: string
     },
     coalesce ? { coalesce: `music-${coalesce}:${s.activeSurfaceId}` } : undefined,
   );
+}
+
+/** Unlocked photo and video frames in the current selection: the ones a layout can rearrange. */
+export function layoutTargets(): DesignElement[] {
+  const s = store();
+  const surface = s.project && getSurface(s.project, s.activeSurfaceId);
+  if (!surface) return [];
+  const selected = new Set(s.selection);
+  return surface.elements.filter((el) => selected.has(el.id) && !el.locked && (el.type === "image" || el.type === "video"));
+}
+
+/**
+ * Apply a layout to the slide in view. With two or more photo frames selected they are rearranged
+ * (nothing is added or removed); otherwise `count` empty photo frames are added. One undo step.
+ */
+export function applyLayout(kind: LayoutKind, count: number, gap: number): "arranged" | "added" | null {
+  const s = store();
+  const project = s.project;
+  if (!project) return null;
+  const offset = project.mode === "seamless" ? s.focusSlideIndex * project.width : 0;
+  const area = layoutArea(project.width, project.height, offset);
+  const targets = layoutTargets();
+  if (targets.length >= MIN_LAYOUT_COUNT) {
+    const boxes = assignBoxes(targets, layoutBoxes(kind, targets.length, area, { gap }));
+    s.commit((p) => updateElements(p, s.activeSurfaceId, [...boxes.keys()], (el) => boxes.get(el.id) ?? {}));
+    return "arranged";
+  }
+  const frames = layoutBoxes(kind, count, area, { gap }).map(({ rotation, ...box }, i) => ({ ...createPlaceholder(box, `Photo ${i + 1}`), rotation }));
+  s.commit((p) => addElements(p, s.activeSurfaceId, frames));
+  s.select(frames.map((f) => f.id));
+  return "added";
 }

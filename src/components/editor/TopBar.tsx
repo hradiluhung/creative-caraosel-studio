@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Download, Maximize, Minus, PanelLeft, PanelRight, Plus, Redo2, Undo2 } from "lucide-react";
+import { ArrowLeft, Download, History, Maximize, Minus, PanelLeft, PanelRight, Plus, Redo2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { renameProject } from "@/document/operations";
 import { useEditorStore } from "@/store/editorStore";
@@ -28,10 +28,12 @@ export function SaveStatus() {
 export function TopBar({
   compact,
   onExport,
+  onHistory,
   onTogglePanel,
 }: {
   compact: boolean;
   onExport: () => void;
+  onHistory: () => void;
   onTogglePanel?: (side: "left" | "right") => void;
 }) {
   const name = useEditorStore((s) => s.project?.name ?? "");
@@ -78,6 +80,9 @@ export function TopBar({
         </IconButton>
         <IconButton label="Redo" disabled={!canRedo} onClick={() => s().redo()}>
           <Redo2 />
+        </IconButton>
+        <IconButton label="Version history" onClick={onHistory}>
+          <History />
         </IconButton>
         {!compact && (
           <div className="mx-2 flex items-center">

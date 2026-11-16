@@ -22,6 +22,8 @@ import { PropertiesPanel } from "./PropertiesPanel";
 import { SlideNavigator } from "./SlideNavigator";
 import { SaveStatus, TopBar } from "./TopBar";
 import { useAutosave } from "./useAutosave";
+import { useVersionHistory } from "./useVersionHistory";
+import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { useSlideThumbnails } from "./useSlideThumbnails";
 
 type LoadState = { kind: "loading" } | { kind: "ready" } | { kind: "error"; message: string; details?: string[] };
@@ -73,6 +75,7 @@ function Workspace({ images }: { images: ImageStore }) {
   const hasSelection = useEditorStore((s) => s.selection.length > 0);
   const thumbnails = useSlideThumbnails(project, images);
   const [exporting, setExporting] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [panels, setPanels] = useState({ left: true, right: true });
   const [requestedSheet, setSheet] = useState<MobileSheet>(null);
   // A sheet about the selection makes no sense once nothing is selected.
@@ -81,6 +84,7 @@ function Workspace({ images }: { images: ImageStore }) {
   const [dropErrors, setDropErrors] = useState<string[]>([]);
 
   useAutosave(images);
+  useVersionHistory(images);
 
   // Keep the attached brand kit loaded for the color fields and the Brand section.
   const brandKitId = project?.brandKitId ?? null;
@@ -93,7 +97,7 @@ function Workspace({ images }: { images: ImageStore }) {
       live = false;
     };
   }, [brandKitId]);
-  useEditorShortcuts(!exporting);
+  useEditorShortcuts(!exporting && !historyOpen);
 
   // Heavy videos get a light preview copy in the background (also ones imported before this existed).
   const assets = project?.assets;
@@ -161,7 +165,7 @@ function Workspace({ images }: { images: ImageStore }) {
     ];
     return (
       <div className="flex h-dvh flex-col overflow-hidden">
-        <TopBar compact onExport={() => setExporting(true)} />
+        <TopBar compact onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} />
         {canvas}
         {!sheet && <Timeline />}
         {sheet === "insert" && (
@@ -206,13 +210,14 @@ function Workspace({ images }: { images: ImageStore }) {
           ))}
         </nav>
         {exporting && <ExportDialog images={images} onClose={() => setExporting(false)} />}
+        {historyOpen && <VersionHistoryDialog images={images} onClose={() => setHistoryOpen(false)} />}
       </div>
     );
   }
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <TopBar compact={false} onExport={() => setExporting(true)} onTogglePanel={(side) => setPanels((p) => ({ ...p, [side]: !p[side] }))} />
+      <TopBar compact={false} onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} onTogglePanel={(side) => setPanels((p) => ({ ...p, [side]: !p[side] }))} />
       <div className="flex min-h-0 flex-1">
         {panels.left && (
           <aside aria-label="Insert" className="thin-scroll w-60 shrink-0 overflow-y-auto border-r border-line bg-panel">
@@ -239,6 +244,7 @@ function Workspace({ images }: { images: ImageStore }) {
         )}
       </div>
       {exporting && <ExportDialog images={images} onClose={() => setExporting(false)} />}
+        {historyOpen && <VersionHistoryDialog images={images} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }
