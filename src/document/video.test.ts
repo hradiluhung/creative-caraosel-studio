@@ -9,7 +9,7 @@ import { getExportFrames, getSurfaces } from "./geometry";
 import { DocumentError, parseProject } from "./migrations";
 import * as ops from "./operations";
 import { isAudioAsset, isVideoAsset, projectSchema, SCHEMA_VERSION, type AssetRef, type Project } from "./schema";
-import { audioTimeAt, clampTrim, clipActive, clipReach, MAX_VIDEO_SLIDE_SECONDS, createAudioTrack, trackActive, trackEnd, trackGainAt, trackGainPoints, clipDuration, clipEnd, clipEnded, formatSeconds, frameClips, frameDuration, MIN_CLIP_SECONDS, moveClip, splitClip, surfaceDuration, trimClipEnd, trimClipStart, videoTimeAt } from "./timing";
+import { audioTimeAt, clampTrim, clipActive, clipReach, MAX_VIDEO_SLIDE_SECONDS, playbackScope, createAudioTrack, trackActive, trackEnd, trackGainAt, trackGainPoints, clipDuration, clipEnd, clipEnded, formatSeconds, frameClips, frameDuration, MIN_CLIP_SECONDS, moveClip, splitClip, surfaceDuration, trimClipEnd, trimClipStart, videoTimeAt } from "./timing";
 
 const place = { centerX: 540, centerY: 675, maxWidth: 1080, maxHeight: 1350 };
 const clip: AssetRef = { id: "v1", name: "beach.mp4", mime: "video/mp4", width: 1920, height: 1080, size: 5_000_000, duration: 8 };
@@ -537,5 +537,34 @@ describe("background music", () => {
     expect(peaks).toEqual([0, 0, 0.5, 0.5]);
     expect(computePeaks([], 4)).toEqual([]);
     expect(computePeaks([new Float32Array(16).fill(3)], 2)).toEqual([1, 1]);
+  });
+});
+
+describe("what one press on play covers", () => {
+  it("is every clip of an independent slide", () => {
+    const { project, surfaceId, video } = withVideo();
+    const scope = playbackScope(project, surfaceId, 0, []);
+    expect(scope).toMatchObject({ slideIndex: null, duration: 8 });
+    expect(scope.clips.map((c) => c.id)).toEqual([video.id]);
+  });
+
+  it("is one slide of a seamless panorama: the selected video's slide, otherwise the slide in focus", () => {
+    const { project, surfaceId, video } = withVideo("seamless"); // 8 s clip centered on slide 1 (0..1080)
+    const second = { ...createVideo({ ...clip, id: "v2", duration: 3 }, place), id: "second", x: 1080 + 100 }; // on slide 2
+    const pano = ops.addElements(ops.addAssetRef(project, { ...clip, id: "v2", duration: 3 }), surfaceId, [second]);
+    // Nothing selected: the slide in focus decides.
+    expect(playbackScope(pano, surfaceId, 0, []).clips.map((c) => c.id)).toEqual([video.id]);
+    expect(playbackScope(pano, surfaceId, 0, [])).toMatchObject({ slideIndex: 0, duration: 8 });
+    expect(playbackScope(pano, surfaceId, 1, [])).toMatchObject({ slideIndex: 1, duration: 3 });
+    // A selected video brings its own slide, wherever the focus is.
+    expect(playbackScope(pano, surfaceId, 0, ["second"])).toMatchObject({ slideIndex: 1, duration: 3 });
+    expect(playbackScope(pano, surfaceId, 1, [video.id]).clips.map((c) => c.id)).toEqual([video.id]);
+    // Two videos on the same slide play together.
+    const together = ops.updateElements(pano, surfaceId, ["second"], { x: 200 });
+    expect(playbackScope(together, surfaceId, 0, [video.id]).clips.map((c) => c.id).sort()).toEqual(["second", video.id].sort());
+    expect(playbackScope(together, surfaceId, 1, []).clips).toEqual([]);
+    // A clip that crosses a slide boundary plays with both slides.
+    const crossing = ops.updateElements(pano, surfaceId, [video.id], { x: 700 });
+    expect(playbackScope(crossing, surfaceId, 1, []).clips.map((c) => c.id).sort()).toEqual(["second", video.id].sort());
   });
 });

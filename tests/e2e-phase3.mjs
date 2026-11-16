@@ -804,6 +804,50 @@ try {
   await old.close();
   await page.bringToFront();
 
+  // ---------- Seamless project: one slide plays at a time ----------
+  await page.goto(BASE, { waitUntil: "networkidle0" });
+  await clickText("New project");
+  await page.type("#np-name", "Seamless Video");
+  await setField("Number of slides", 3);
+  await clickText("Seamless");
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Create project")]);
+  await page.waitForSelector('[data-testid="canvas-host"] canvas');
+  await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/clip.mp4`);
+  await saved();
+  await click('ol[aria-label="Slides"] > li:nth-child(2) button');
+  await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/sides.mp4`);
+  await saved();
+  doc = await readDoc();
+  const pano = doc.panorama.elements.filter((e) => e.type === "video");
+  const slideOf = (e) => Math.floor((e.x + e.width / 2) / doc.width);
+  ok("two videos sit on two different slides of one panorama", doc.mode === "seamless" && pano.length === 2 && slideOf(pano[0]) === 0 && slideOf(pano[1]) === 1, JSON.stringify(pano.map((e) => [e.name, e.x, slideOf(e)])));
+  const timelineState = async () => ({
+    slide: await page.$eval('[data-testid="timeline-slide"]', (n) => n.textContent).catch(() => null),
+    bars: (await bars()).map((b) => b.name).join(),
+    clock: await clockText().catch(() => null),
+  });
+  let ts = await timelineState();
+  ok("the timeline is the timeline of the selected video's slide only", ts.slide === "Slide 2" && ts.bars === "Clip sides" && / \/ 0:01\.0$/.test(ts.clock), JSON.stringify(ts));
+  const liveVideos = () => page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ playing: !v.paused, length: Number(v.duration.toFixed(1)) })));
+  await click(L("Play slide"));
+  await waitState("playing", 3000);
+  await sleep(400);
+  let live = await liveVideos();
+  ok("play starts only that slide's video, not every video of the panorama", live.length === 1 && live[0].length === 1, JSON.stringify(live));
+  await waitState("stopped");
+  // The other slide: its own clip, its own length.
+  await click('ol[aria-label="Slides"] > li:nth-child(1) button');
+  await page.keyboard.press("Escape");
+  ts = await until(async () => ((t) => ({ done: t.slide === "Slide 1", ...t }))(await timelineState()), 3000);
+  ok("moving to the other slide shows that slide's clip and length", ts.slide === "Slide 1" && ts.bars === "Clip clip" && / \/ 0:02\.0$/.test(ts.clock), JSON.stringify(ts));
+  await click(L("Play slide"));
+  await waitState("playing", 3000);
+  await sleep(400);
+  live = await liveVideos();
+  ok("and plays that one alone", live.length === 1 && live[0].length === 2, JSON.stringify(live));
+  await click('ol[aria-label="Slides"] > li:nth-child(3) button');
+  ok("a running playback ends when another slide is chosen", (await until(async () => ({ done: (await playbackState()) !== "playing" }), 3000)).done && (await liveVideos()).length === 0);
+
   // ---------- A browser that loads no frame until asked (iOS Safari), simulated ----------
   // On iOS a <video> that is not playing stops at its metadata: no "loadeddata", readyState 1,
   // until something seeks it or plays it. Chrome is made to behave the same way here.

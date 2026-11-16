@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp, Music, Scissors, Trash2, ZoomIn, ZoomOut } from
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getSurface, PANORAMA_ID } from "@/document/geometry";
 import type { AudioTrack, DesignElement, VideoElement } from "@/document/schema";
-import { clipDuration, clipEnd, clipReach, formatSeconds, MAX_VIDEO_SLIDE_SECONDS, moveClip, splitClip, surfaceDuration, trackEnd, trimClipEnd, trimClipStart, videoElements } from "@/document/timing";
+import { clipDuration, clipEnd, clipReach, formatSeconds, MAX_VIDEO_SLIDE_SECONDS, moveClip, playbackScope, splitClip, surfaceDuration, trackEnd, trimClipEnd, trimClipStart } from "@/document/timing";
 import { AUDIO_ACCEPT_ATTR } from "@/persistence/audio";
 import { getAssetPeaks } from "@/persistence/db";
 import { proxyState, subscribeProxies } from "@/persistence/proxy";
@@ -52,7 +52,10 @@ export function Timeline() {
   const [musicError, setMusicError] = useState<string | null>(null);
 
   const surface = project && getSurface(project, activeSurfaceId);
-  const clips = surface ? videoElements(surface.elements) : [];
+  const focusSlideIndex = useEditorStore((s) => s.focusSlideIndex);
+  // In a seamless panorama the timeline is the timeline of one slide (see playbackScope).
+  const scope = project ? playbackScope(project, activeSurfaceId, focusSlideIndex, selection) : null;
+  const clips = scope?.clips ?? [];
   const hasVideo = clips.some((el) => el.visible);
   // On a phone the canvas needs the room: the tracks start folded away.
   const open = openChoice ?? !isMobile;
@@ -75,7 +78,7 @@ export function Timeline() {
 
   if (!project || !surface || !hasVideo) return null;
 
-  const duration = surfaceDuration(surface.elements, surface.duration);
+  const duration = scope?.duration ?? 0;
   const autoDuration = surfaceDuration(surface.elements);
   const assetDuration = (el: VideoElement) => project.assets.find((a) => a.id === el.assetId)?.duration ?? el.trimEnd;
   // The ruler covers everything a clip could be stretched back to, not only what is left after
@@ -158,6 +161,11 @@ export function Timeline() {
       )}
       <div className="flex items-center gap-1 px-2 py-1">
         <PlaybackBar duration={duration} />
+        {scope && scope.slideIndex !== null && (
+          <span data-testid="timeline-slide" className="shrink-0 rounded-[4px] bg-sunken px-1.5 py-0.5 text-[10px] text-muted" title="In a seamless project each slide plays and exports on its own">
+            Slide {scope.slideIndex + 1}
+          </span>
+        )}
         <button
           type="button"
           aria-label="Split clip at playhead"

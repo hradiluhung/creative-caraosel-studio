@@ -82,6 +82,29 @@ export function frameClips(project: Project, frame: ExportFrame): VideoElement[]
   });
 }
 
+/**
+ * What one press on play covers. On an independent slide: its clips. In a seamless panorama:
+ * only the clips of ONE slide, because every slide is exported as its own video and playing
+ * every video of the whole panorama at once is both wrong and very heavy. The slide is the one
+ * the selected video sits on (by its center), otherwise the slide in focus.
+ * `clips` includes hidden ones (the timeline shows them dimmed).
+ */
+export function playbackScope(project: Project, surfaceId: string, focusSlideIndex: number, selection: string[]): { slideIndex: number | null; clips: VideoElement[]; duration: number } {
+  const surface = getSurface(project, surfaceId);
+  if (!surface) return { slideIndex: null, clips: [], duration: 0 };
+  const all = videoElements(surface.elements);
+  if (project.mode !== "seamless") return { slideIndex: null, clips: all, duration: surfaceDuration(surface.elements, surface.duration) };
+  const last = Math.max(0, project.slides.length - 1);
+  const selected = selection.length === 1 ? all.find((el) => el.id === selection[0]) : undefined;
+  const slideIndex = Math.min(last, Math.max(0, selected ? Math.floor((selected.x + selected.width / 2) / project.width) : focusSlideIndex));
+  const from = slideIndex * project.width;
+  const clips = all.filter((el) => {
+    const b = rotatedBounds(el);
+    return b.x < from + project.width && b.x + b.width > from;
+  });
+  return { slideIndex, clips, duration: surfaceDuration(clips) };
+}
+
 /** Seconds an export frame plays: 0 for a still slide. */
 export function frameDuration(project: Project, frame: ExportFrame): number {
   const clips = frameClips(project, frame);

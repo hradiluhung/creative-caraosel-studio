@@ -49,6 +49,11 @@ export interface BuildOptions {
   videoTime?: number;
   /** Pixels per document pixel for video frames only (defaults to `quality`). Playback lowers it to screen size. */
   videoQuality?: number;
+  /**
+   * Ids of the clips `videoTime` applies to. Every other video keeps showing its poster frame
+   * (in a seamless panorama only one slide plays at a time). Unset: all of them.
+   */
+  videoScope?: ReadonlySet<string>;
 }
 
 // --- Text -------------------------------------------------------------------
@@ -182,19 +187,25 @@ const frameBorder = (el: Framed): Konva.ShapeConfig => ({
   lineJoin: "round",
 });
 
-function videoFrameOptions(opts: BuildOptions) {
-  return { quality: opts.videoQuality ?? opts.quality, maxSide: opts.maxImageSide, time: opts.videoTime };
+/** The slide time a clip is drawn at, or undefined when it shows its poster frame. */
+function clipTime(el: VideoElement, opts: BuildOptions): number | undefined {
+  return opts.videoScope && !opts.videoScope.has(el.id) ? undefined : opts.videoTime;
+}
+
+function videoFrameOptions(el: VideoElement, opts: BuildOptions) {
+  return { quality: opts.videoQuality ?? opts.quality, maxSide: opts.maxImageSide, time: clipTime(el, opts) };
 }
 
 function videoNodes(el: VideoElement, res: RenderResources, opts: BuildOptions): Konva.Shape[] {
-  const frame = res.getVideoFrame(el, videoFrameOptions(opts));
+  const frame = res.getVideoFrame(el, videoFrameOptions(el, opts));
+  const time = clipTime(el, opts);
   // Same construction as photos: the frame is the pattern fill of the mask outline, so border
   // and shadow follow any mask shape. Without a frame yet (still decoding) it is a neutral box.
   return [
     maskOutline(el, {
       name: VIDEO_FRAME_NAME,
       // At a slide time, a clip is only on screen while it plays (poster mode shows every clip).
-      visible: opts.videoTime === undefined || clipActive(el, opts.videoTime),
+      visible: time === undefined || clipActive(el, time),
       ...(frame ? frameFill(el, frame) : { fill: "#dcdad5" }),
       ...frameBorder(el),
     }),
@@ -210,10 +221,12 @@ export function refreshVideoFrames(root: Konva.Container, elements: DesignElemen
   for (const node of root.find<Konva.Shape>(`.${VIDEO_FRAME_NAME}`)) {
     const el = byId.get(node.getParent()?.id() ?? "");
     if (el?.type !== "video") continue;
-    const active = opts.videoTime === undefined || clipActive(el, opts.videoTime);
+    const time = clipTime(el, opts);
+    if (time === undefined && opts.videoTime !== undefined) continue; // not part of this playback: stays on its poster
+    const active = time === undefined || clipActive(el, time);
     if (node.visible() !== active) node.visible(active);
     if (!active) continue;
-    const frame = res.getVideoFrame(el, videoFrameOptions(opts));
+    const frame = res.getVideoFrame(el, videoFrameOptions(el, opts));
     // Setting the attributes again, even to the same canvas, makes Konva rebuild the pattern.
     if (frame) node.setAttrs({ fill: undefined, ...frameFill(el, frame) });
   }

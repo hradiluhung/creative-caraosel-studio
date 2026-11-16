@@ -6,7 +6,7 @@ import { flushSync } from "react-dom";
 import { fitToViewport, getSlideOffsets, getSurface } from "@/document/geometry";
 import { getElements, updateElements } from "@/document/operations";
 import type { DesignElement, TextElement } from "@/document/schema";
-import { surfaceDuration, videoElements } from "@/document/timing";
+import { playbackScope } from "@/document/timing";
 import { ensureFontsLoaded, FONT_FALLBACK, resolveItalic, resolveWeight } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
 import { buildSurfaceContent, collectFonts, ELEMENT_NAME, measureTextHeight, refreshVideoFrames, type BuildOptions } from "@/render/scene";
@@ -53,12 +53,13 @@ const playbackPixelRatio = () => Math.min(window.devicePixelRatio || 1, PLAYBACK
 const playingVideoQuality = (stage: Konva.Stage) => Math.min(1, stage.scaleX() * playbackPixelRatio());
 
 const store = () => useEditorStore.getState();
-/** Visible video clips of the active surface and how long the surface plays. */
+/** The visible clips one press on play covers (see playbackScope), and how long they play. */
 function activeClips() {
   const s = store();
   const surface = s.project && getSurface(s.project, s.activeSurfaceId);
-  const clips = surface ? videoElements(surface.elements).filter((el) => el.visible) : [];
-  return { surface, clips, duration: surface ? surfaceDuration(surface.elements, surface.duration) : 0 };
+  const scope = s.project ? playbackScope(s.project, s.activeSurfaceId, s.focusSlideIndex, s.selection) : null;
+  const clips = scope ? scope.clips.filter((el) => el.visible) : [];
+  return { surface, clips, duration: scope?.duration ?? 0, ids: new Set(scope?.clips.map((el) => el.id)) };
 }
 /** Breathing room around a fitted canvas. Phones get less so the canvas stays large. */
 const viewPadding = () => (window.matchMedia("(max-width: 767px)").matches ? 20 : 56);
@@ -99,6 +100,12 @@ export function CanvasStage({ images }: { images: ImageStore }) {
   const selection = useEditorStore((s) => s.selection);
   const editingTextId = useEditorStore((s) => s.editingTextId);
   const playback = useEditorStore((s) => s.playback);
+  /** Seamless only: the slide whose clips play. Selecting a video on another slide moves it. */
+  const scopeSlide = useEditorStore((s) => (s.project ? playbackScope(s.project, s.activeSurfaceId, s.focusSlideIndex, s.selection).slideIndex : null));
+  useEffect(() => {
+    // Another slide's clips are a different playback: the running one ends.
+    if (store().playback !== "stopped") store().setPlayback("stopped");
+  }, [scopeSlide]);
 
   const [resourceTick, setResourceTick] = useState(0);
   const [view, setViewState] = useState<View>({ scale: 1, x: 0, y: 0 });
@@ -587,7 +594,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     };
     canvasApi.stopPlayback = () => store().setPlayback("stopped");
     canvasApi.seek = (seconds) => {
-      const { surface, clips, duration } = activeClips();
+      const { surface, clips, duration, ids } = activeClips();
       if (!surface || clips.length === 0) return;
       const time = Math.min(Math.max(0, seconds), Math.max(0, duration - 0.001));
       const wasPaused = store().playback === "paused";
@@ -598,7 +605,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       // Already paused: nothing re-renders, so put the frames of the new time on screen directly.
       // (Each video also asks for a rebuild as soon as its seek has landed.)
       if (wasPaused) {
-        refreshVideoFrames(holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time });
+        refreshVideoFrames(holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time, videoScope: ids });
         contentLayer.batchDraw();
       }
     };
@@ -671,15 +678,15 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     );
     // Stopped: every video shows its poster frame, exactly like thumbnails and image exports.
     const videoTime = playback === "stopped" ? undefined : playTimeRef.current;
-    const clips = videoElements(surface.elements).filter((el) => el.visible);
+    const { clips, duration: scopeDuration, ids: videoScope } = activeClips();
     if (playback === "paused") {
       // Nothing left to preview (the last clip was deleted or hidden): back to the idle state.
       if (clips.length === 0) store().setPlayback("stopped");
       else images.videos.sync(clips, playTimeRef.current, false);
-      images.music.sync(surface.audio, playTimeRef.current, false, surfaceDuration(surface.elements, surface.duration));
+      images.music.sync(surface.audio, playTimeRef.current, false, scopeDuration);
     }
     const videoQuality = playback === "playing" ? playingVideoQuality(r.stage) : undefined;
-    const content = buildSurfaceContent(surface, images, { ...EDITOR_BUILD, videoTime, videoQuality });
+    const content = buildSurfaceContent(surface, images, { ...EDITOR_BUILD, videoTime, videoQuality, videoScope });
     r.holder.add(content);
     if (editingTextId) content.findOne(`#${editingTextId}`)?.visible(false);
 
@@ -709,7 +716,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       }
     }
     r.stage.batchDraw();
-  }, [project, activeSurfaceId, editingTextId, resourceTick, images, syncTransformer, fit, focusSlide, playback]);
+  }, [project, activeSurfaceId, editingTextId, resourceTick, images, syncTransformer, fit, focusSlide, playback, scopeSlide]);
 
   // --- Video preview ----------------------------------------------------------
 
@@ -734,7 +741,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     let last = performance.now();
     let waitingSince = 0;
     const animation = new Konva.Animation(() => {
-      const { surface, clips, duration } = activeClips();
+      const { surface, clips, duration, ids } = activeClips();
       if (!surface || clips.length === 0) {
         store().setPlayback("stopped");
         return false;
@@ -762,7 +769,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       }
       // Repaint only when a video has a new frame: a 30 fps clip does not need 60 paints a second.
       if (!images.videos.takeNewFrames()) return false;
-      refreshVideoFrames(r.holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time, videoQuality: playingVideoQuality(r.stage) });
+      refreshVideoFrames(r.holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time, videoQuality: playingVideoQuality(r.stage), videoScope: ids });
     }, r.contentLayer);
     animation.start();
     return () => {

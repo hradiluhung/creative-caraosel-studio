@@ -7,8 +7,8 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 ## State before Phase 3
 
 - Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
-- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (100 tests),
-  `npm run test:e2e` (36 + 28 + 121 browser checks; headers of `tests/e2e*.mjs` explain the setup).
+- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (102 tests),
+  `npm run test:e2e` (36 + 28 + 127 browser checks; headers of `tests/e2e*.mjs` explain the setup).
 - Document schema was version 2. C1 bumped it to 3, C2 to 4 and C4 to 5, each with a migration in
   `src/document/migrations.ts` (never edit old migrations).
 
@@ -338,6 +338,20 @@ choppy and far too slowly, with sound glitching or repeating, also after its lig
   device instead of guessing again.
 - New: a video frame can be switched to any other video already imported into the project
   ("Video file" in the properties of a video layer), without importing it again.
+
+## Seamless projects: one slide plays at a time (2026-11-17)
+
+Found by the user: in a seamless project, play started every video of the whole panorama at once
+(the "surface" is the panorama). That is heavy, and wrong, because each slide is exported as its own
+video. It may well have been the main reason the long clip stuttered on the iPhone; the readyState bug
+above was real too, but which of the two the device was hitting has not been separated.
+
+- `playbackScope` in `timing.ts`: on an independent slide, all its clips; in a panorama, the clips of
+  one slide: the slide the selected video sits on (by its center), otherwise the slide in focus. Clips
+  that share a slide play together; a clip that crosses a boundary plays with both slides.
+- `CanvasStage` plays only those clips, the timeline shows only them (with a "Slide N" label) and
+  their length, and `BuildOptions.videoScope` keeps every other video on its poster frame. Choosing
+  another slide ends a running playback. Export was already per slide and is unchanged.
 
 ## Phase 3 status
 
