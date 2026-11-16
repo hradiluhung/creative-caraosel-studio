@@ -6,17 +6,18 @@
 export const VIDEO_FPS = 30;
 export type VideoResolution = 720 | 1080;
 export type VideoQuality = "small" | "standard" | "high";
-export type AudioCodec = "aac" | "opus";
+/** Sound is always AAC: it is what Instagram and phones expect. */
+export type AudioCodec = "aac";
 
 /** Encoded bits per pixel per frame. 1080 x 1350 at 30 fps: about 2.6, 4.8 and 8.7 Mbit/s. */
 const BITS_PER_PIXEL: Record<VideoQuality, number> = { small: 0.06, standard: 0.11, high: 0.2 };
 export const AUDIO_SAMPLE_RATE = 48_000;
-const AUDIO_BITRATE = 128_000;
+export const AUDIO_BITRATE = 128_000;
 
 export interface VideoSupport {
   /** WebCodecs H.264 encoding works for this output size. */
   mp4: boolean;
-  /** Sound codecs this browser can encode, best first. Empty: the MP4 has no sound. */
+  /** Sound codecs that can be produced here. Empty: the MP4 has no sound. */
   audio: AudioCodec[];
   /** Real-time fallback: what MediaRecorder would produce here, or null when it cannot record. */
   recorder: { mime: string; ext: "mp4" | "webm" } | null;
@@ -63,27 +64,12 @@ export async function pickAvcCodec(size: VideoSize, bitrate: number): Promise<st
   return null;
 }
 
-const AUDIO_CODEC_STRING: Record<AudioCodec, string> = { aac: "mp4a.40.2", opus: "opus" };
-export const audioEncoderConfig = (codec: AudioCodec): AudioEncoderConfig => ({
-  codec: AUDIO_CODEC_STRING[codec],
-  sampleRate: AUDIO_SAMPLE_RATE,
-  numberOfChannels: 2,
-  bitrate: AUDIO_BITRATE,
-});
-
 /** Feature detection for the export dialog: says honestly what this device can produce. */
 export async function detectVideoSupport(size: VideoSize): Promise<VideoSupport> {
   const mp4 = (await pickAvcCodec(size, videoBitrate(size, "standard"))) !== null;
-  const audio: AudioCodec[] = [];
-  if (typeof AudioEncoder !== "undefined" && typeof OfflineAudioContext !== "undefined") {
-    for (const codec of ["aac", "opus"] as const) {
-      try {
-        if ((await AudioEncoder.isConfigSupported(audioEncoderConfig(codec))).supported) audio.push(codec);
-      } catch {
-        /* not supported */
-      }
-    }
-  }
+  // Sound is encoded by a WebAssembly AAC encoder that ships with the app, so it does not depend on
+  // what the browser's own encoders can do. It only needs Web Audio (to mix) and WebAssembly.
+  const audio: AudioCodec[] = typeof OfflineAudioContext !== "undefined" && typeof WebAssembly !== "undefined" ? ["aac"] : [];
   let recorder: VideoSupport["recorder"] = null;
   if (typeof MediaRecorder !== "undefined" && "captureStream" in HTMLCanvasElement.prototype) {
     const mime = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m));

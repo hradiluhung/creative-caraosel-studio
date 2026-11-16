@@ -308,7 +308,7 @@ function VideoProps({ el }: { el: VideoElement }) {
           <Select label="Speed" value={String(el.playbackRate)} onChange={(v) => set({ playbackRate: Number(v) })} options={speeds.map((v) => ({ value: String(v), label: `${v}×` }))} />
           <NumberField label="Poster time" prefix="▣" min={0} max={source} step={0.1} decimals={2} value={el.posterTime} onChange={(posterTime) => set({ posterTime })} />
         </Row>
-        <NumberField label="Starts at" prefix="▸" min={0} max={600} step={0.1} decimals={2} value={el.start} onChange={(start) => set({ start })} />
+        <NumberField label="Starts at" prefix="▸" min={0} max={59.9} step={0.1} decimals={2} value={el.start} onChange={(start) => set({ start })} />
         <Button size="sm" className="w-full" disabled={playback === "stopped"} onClick={() => set({ posterTime: Math.min(source, Number(videoTimeAt(el, playhead).toFixed(2))) })}>
           Use current frame as poster
         </Button>

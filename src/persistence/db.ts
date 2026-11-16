@@ -26,6 +26,8 @@ export interface StoredAsset extends AssetRef {
   blob: Blob;
   /** Video assets only: a small still frame for instant previews (never referenced by documents). */
   poster?: Blob;
+  /** Heavy videos only: a small copy the editor plays instead of the original (see proxy.ts). */
+  proxy?: Blob;
   /** Audio assets only: waveform bars, 0..1 (decoration for the timeline). */
   peaks?: number[];
   createdAt: string;
@@ -243,6 +245,18 @@ export async function getAssetBlob(id: string): Promise<Blob | undefined> {
 
 export async function getAssetPoster(id: string): Promise<Blob | undefined> {
   return (await (await db()).get("assets", id))?.poster;
+}
+
+export async function getAssetProxy(id: string): Promise<Blob | undefined> {
+  return (await (await db()).get("assets", id))?.proxy;
+}
+
+/** Attach a preview proxy to a stored video. Does nothing when the asset was deleted in the meantime. */
+export async function putAssetProxy(id: string, proxy: Blob): Promise<void> {
+  const tx = (await db()).transaction("assets", "readwrite");
+  const stored = await tx.store.get(id);
+  if (stored) await tx.store.put({ ...stored, proxy });
+  await tx.done;
 }
 
 export async function getAssetPeaks(id: string): Promise<number[] | undefined> {

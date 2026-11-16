@@ -4,7 +4,8 @@ import { Layers, Maximize, PaintBucket, Plus, SlidersHorizontal } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import { DocumentError } from "@/document/migrations";
 import { loadCustomFonts } from "@/persistence/customFonts";
-import { getAssetBlob, getAssetPoster, getBrandKit, loadProject } from "@/persistence/db";
+import { getAssetBlob, getAssetPoster, getAssetProxy, getBrandKit, loadProject } from "@/persistence/db";
+import { ensureProxy, subscribeProxies } from "@/persistence/proxy";
 import { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
@@ -93,6 +94,13 @@ function Workspace({ images }: { images: ImageStore }) {
     };
   }, [brandKitId]);
   useEditorShortcuts(!exporting);
+
+  // Heavy videos get a light preview copy in the background (also ones imported before this existed).
+  const assets = project?.assets;
+  useEffect(() => {
+    assets?.forEach(ensureProxy);
+  }, [assets]);
+  useEffect(() => subscribeProxies((assetId, state) => state.status === "ready" && void images.refreshPreview(assetId)), [images]);
 
   const canvas = (
     <div
@@ -237,7 +245,7 @@ function Workspace({ images }: { images: ImageStore }) {
 
 export default function EditorApp() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const images = useMemo(() => new ImageStore(getAssetBlob, getAssetPoster), []);
+  const images = useMemo(() => new ImageStore(getAssetBlob, getAssetPoster, getAssetProxy), []);
 
   useEffect(() => {
     let cancelled = false;

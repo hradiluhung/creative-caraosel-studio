@@ -5,8 +5,8 @@
 import { createId } from "./ids";
 import { createSlide } from "./factory";
 import { PANORAMA_ID } from "./geometry";
-import { splitClip } from "./timing";
-import { MAX_SLIDE_SECONDS, MAX_SLIDES, type AssetRef, type AudioTrack, type Background, type DesignElement, type Project, type Slide } from "./schema";
+import { MAX_VIDEO_SLIDE_SECONDS, splitClip } from "./timing";
+import { MAX_SLIDES, type AssetRef, type AudioTrack, type Background, type DesignElement, type Project, type Slide } from "./schema";
 
 type Container = { background: Background; elements: DesignElement[] };
 
@@ -99,7 +99,7 @@ export function setSlideDuration(project: Project, slideId: string, duration: nu
     if (s.id !== slideId || s.duration === duration) return s;
     const { duration: _old, ...rest } = s;
     void _old;
-    return duration === undefined ? rest : { ...rest, duration: Math.min(Math.max(duration, 0.1), MAX_SLIDE_SECONDS) };
+    return duration === undefined ? rest : { ...rest, duration: Math.min(Math.max(duration, 0.1), MAX_VIDEO_SLIDE_SECONDS) };
   });
   return slides.some((s, i) => s !== project.slides[i]) ? { ...project, slides } : project;
 }

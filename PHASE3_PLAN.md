@@ -7,8 +7,8 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 ## State before Phase 3
 
 - Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
-- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (95 tests after C4),
-  `npm run test:e2e` (36 + 28 + 105 browser checks; headers of `tests/e2e*.mjs` explain the setup).
+- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (100 tests),
+  `npm run test:e2e` (36 + 28 + 115 browser checks; headers of `tests/e2e*.mjs` explain the setup).
 - Document schema was version 2. C1 bumped it to 3, C2 to 4 and C4 to 5, each with a migration in
   `src/document/migrations.ts` (never edit old migrations).
 
@@ -184,6 +184,8 @@ weakness of the C1 preview, not something later checkpoints would have fixed. Ch
 
 ### C3: what was built
 
+(The muxer and the sound encoder described here were replaced later: see "Device test round 1".)
+
 - `src/export/video.ts`: one video file per video slide. Each frame is drawn by the scene builder
   (`buildSurfaceContent` once, then `refreshVideoFrames` with `videoTime` per frame) on an off-screen
   stage at output size, encoded with WebCodecs `VideoEncoder` (H.264, High profile with Main and
@@ -277,14 +279,52 @@ weakness of the C1 preview, not something later checkpoints would have fixed. Ch
 - No waveform for video clips, no separate music for a seamless panorama, no music on slides without
   video, one music track per slide.
 
+## Device test round 1 (2026-11-16, iPhone and Mac Chrome) and what was changed
+
+Results reported after C4, and the fixes. **None of these fixes has been confirmed on the devices yet.**
+
+1. *Playback smooth now for a short clip.* Confirmed on the iPhone (the lag fix after C1 works).
+2. *Exported MP4 had no sound with AAC, on the iPhone and in Mac Chrome.* The cause was not found: it
+   could not be reproduced (Chrome on Linux has no AAC encoder at all), so this is a change of
+   approach, not a located bug. Sound is now encoded by mediabunny's WebAssembly AAC encoder
+   (`@mediabunny/aac-encoder`, FFmpeg's encoder), which behaves the same in every browser and could be
+   tested here; `mp4-muxer` and the hand-written `AudioEncoder` code are gone (mediabunny writes the
+   file). After every export with sound, `verifySound` decodes the finished file and compares its
+   loudness with the mix: a silent sound track is now an error, never a "done". The Opus option is
+   gone. Verified here: AAC-LC track present (ffprobe), audible, fades measured.
+   If the file is still silent on the devices, the next suspect is the mix itself
+   (`OfflineAudioContext.decodeAudioData` of the source on that device), and the new error message
+   is the first thing to look at: when the mix has sound and the file does not, the export now fails
+   with a message. When the mix itself is silent, `verifySound` cannot tell that apart from a quiet
+   clip, and the file is still exported.
+3. *A 56 s clip played back laggy on the iPhone.* Assumed cause (not measured on the device): the
+   source is heavy (camera clips are 1080p / 4K, often 60 fps, HEVC), and decoding plus drawing it into
+   the canvas is too much. New: **preview proxies** (`persistence/proxy.ts`). A video above 720p or
+   8 Mbit/s gets a 720p / 30 fps / H.264 copy made in the background with mediabunny (after import,
+   and for older assets when a project opens); the editor plays the copy, poster frames and exports
+   use the original. The timeline shows the progress. Measured here with an 8 s 4K 60 fps clip on a
+   throttled phone profile: 6.9 painted frames per second before, 16.8 with the proxy.
+4. *Limit: 60 s per video slide (Instagram's limit).* `MAX_VIDEO_SLIDE_SECONDS = 60` in `timing.ts`:
+   a new clip takes at most the first 60 s of its file, trim and move cannot push a clip past 60 s,
+   the slide length is capped there, and whatever still runs over (a slowed-down clip) is cut off, in
+   the preview and in the export. Longer source files can still be imported (10 minutes, 300 MB).
+5. *Trimming from the end left no room to drag the handle back out* (the trimmed clip filled the
+   timeline again). The ruler now covers everything a clip could be stretched back to (`clipReach`),
+   drawn as a dashed outline behind the bar, so the scale no longer changes when a clip is trimmed.
+
+Checks after these changes: 100 unit tests; e2e 36/36, 28/28, 115/115 (new: clip sound audible in the
+exported AAC, trim handle has room and stretches back, proxy stored and played, export from the
+original).
+
 ## Phase 3 status
 
 All four checkpoints are implemented and pass the automated checks listed above, in desktop Chrome.
 What still needs a person with the device, in order of risk:
 
-1. iPhone: is playback smooth now? (lag fix after C1, see "Playback lag on the iPhone")
-2. iPhone: export a mixed carousel and open the MP4 in Photos / upload it to Instagram. Check sound
-   (AAC needs a recent iOS; otherwise the dialog announces a silent file).
-3. Mac Chrome: export with AAC sound (could not be tested on Linux).
-4. iPhone: a long clip (several minutes, 1080p or 4K): import time, memory, export time.
-5. The timeline with a finger: trim handles, scrubbing, split.
+1. iPhone and Mac Chrome: does an exported MP4 have sound now? (item 2 above)
+2. iPhone: the 56 s clip. Wait until "Preparing a lighter copy" is gone, then play. Smooth?
+   (item 3; also check how long the preparing takes and that the picture looks right, in particular
+   for HDR / Dolby Vision camera clips)
+3. iPhone: trim from the end, then stretch back out (item 5).
+4. iPhone: export a mixed carousel, open the MP4 in Photos and upload it to Instagram.
+5. iPhone: export time and memory for a full 60 s slide.

@@ -205,7 +205,7 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
                         value={sound ?? "none"}
                         onChange={setSound}
                         options={[
-                          ...support.audio.map((codec) => ({ value: codec, label: codec === "aac" ? "AAC" : "Opus" })),
+                          ...support.audio.map((codec) => ({ value: codec, label: "With sound" })),
                           { value: "none" as const, label: "No sound" },
                         ]}
                       />
@@ -216,12 +216,10 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
                       ? "Checking what this device can export…"
                       : support.mp4
                         ? support.audio.length === 0
-                          ? "MP4 (H.264). This browser cannot encode sound, so the video will be silent."
-                          : sound === "opus"
-                            ? "MP4 (H.264) with Opus sound. Opus plays in Chrome and Firefox, but Instagram and the iPhone Photos app expect AAC, which this browser cannot encode."
-                            : sound === "aac"
-                              ? "MP4 (H.264) with AAC sound. Clips that are sped up or slowed down change pitch in the export."
-                              : "MP4 (H.264) without sound."
+                          ? "MP4 (H.264). Sound cannot be mixed in this browser, so the video will be silent."
+                          : sound
+                            ? "MP4 (H.264) with AAC sound. Clips that are sped up or slowed down change pitch."
+                            : "MP4 (H.264) without sound."
                         : support.recorder
                           ? `This browser cannot encode MP4 directly. Each video slide is recorded in real time as ${support.recorder.ext === "mp4" ? "MP4" : "WebM"}, without sound, and takes as long as it plays. Keep this tab in front while it records.`
                           : "This browser can neither encode nor record video. Choose Still image to export the poster frames."}

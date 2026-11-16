@@ -6,13 +6,16 @@
  * preview about geometry. Which source frame belongs to which moment comes from
  * src/document/timing.ts.
  *
- *  - Main path (WebCodecs): frames are produced one by one, as fast as the device can seek
- *    and encode, and muxed into an MP4 (H.264, plus AAC or Opus sound).
+ *  - Main path (WebCodecs): frames are produced one by one, as fast as the device can decode
+ *    and encode, and written to an MP4 (H.264 video, AAC sound) with mediabunny. The sound is
+ *    encoded by mediabunny's WebAssembly AAC encoder, not by the browser's: the browsers' own
+ *    AAC encoders produced silent files on a Mac and an iPhone, and Chrome on Linux has none.
  *  - Fallback (no WebCodecs): the slide is played in real time into a MediaRecorder. The file
  *    format is whatever that browser records, and there is no sound.
  */
 import Konva from "konva";
-import { ArrayBufferTarget, Muxer } from "mp4-muxer";
+import { registerAacEncoder } from "@mediabunny/aac-encoder";
+import { AudioBufferSource, BufferTarget, CanvasSource, Mp4OutputFormat, Output } from "mediabunny";
 import { getSurface, type ExportFrame } from "@/document/geometry";
 import type { AudioTrack, Project, VideoElement } from "@/document/schema";
 import { frameClips, frameDuration, trackEnd, trackGainPoints } from "@/document/timing";
@@ -21,13 +24,12 @@ import { buildSurfaceContent, refreshVideoFrames, type BuildOptions } from "@/re
 import { createSilentVideo, releaseVideo, waitForMetadata } from "@/render/videoDom";
 import { ClipFeed, openDecodedSource, type DecodedSource } from "./frameSource";
 import {
+  AUDIO_BITRATE,
   AUDIO_SAMPLE_RATE,
-  audioEncoderConfig,
   detectVideoSupport,
   pickAvcCodec,
   VIDEO_FPS,
   videoBitrate,
-  videoEncoderConfig,
   videoOutputSize,
   type AudioCodec,
   type VideoQuality,
@@ -175,34 +177,35 @@ async function mixAudio(clips: VideoElement[], music: AudioTrack | undefined, du
   return any ? ctx.startRendering() : null;
 }
 
-async function encodeAudio(buffer: AudioBuffer, codec: AudioCodec, muxer: Muxer<ArrayBufferTarget>, check: () => void) {
-  let failure: unknown = null;
-  const encoder = new AudioEncoder({
-    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-    error: (e) => {
-      failure = e;
-    },
-  });
-  encoder.configure(audioEncoderConfig(codec));
-  const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
-  const block = AUDIO_SAMPLE_RATE / 10;
+let aacRegistered = false;
+/** Make mediabunny encode AAC with the bundled WebAssembly encoder (registered encoders are used first). */
+function enableBundledAac() {
+  if (!aacRegistered) registerAacEncoder();
+  aacRegistered = true;
+}
+
+const rms = (data: Float32Array) => {
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) sum += data[i] * data[i];
+  return Math.sqrt(sum / Math.max(1, data.length / 4));
+};
+
+/**
+ * Listen to the finished file: when the mix had sound, the exported sound track must have it
+ * too. An export is never reported as done with a sound track that came out silent.
+ */
+async function verifySound(blob: Blob, mixed: AudioBuffer, slide: number) {
+  const wanted = Math.max(rms(mixed.getChannelData(0)), mixed.numberOfChannels > 1 ? rms(mixed.getChannelData(1)) : 0);
+  if (wanted < 0.0005) return; // the mix itself is silent (quiet clips): nothing to compare
+  let got: number;
   try {
-    for (let offset = 0; offset < buffer.length; offset += block) {
-      check();
-      if (failure) throw failure;
-      const frames = Math.min(block, buffer.length - offset);
-      const data = new Float32Array(frames * 2);
-      data.set(channels[0].subarray(offset, offset + frames), 0);
-      data.set(channels[1].subarray(offset, offset + frames), frames);
-      const audio = new AudioData({ format: "f32-planar", sampleRate: AUDIO_SAMPLE_RATE, numberOfFrames: frames, numberOfChannels: 2, timestamp: Math.round((offset / AUDIO_SAMPLE_RATE) * 1e6), data });
-      encoder.encode(audio);
-      audio.close();
-      if (encoder.encodeQueueSize > 20) await sleep(0);
-    }
-    await encoder.flush();
-    if (failure) throw failure;
-  } finally {
-    if (encoder.state !== "closed") encoder.close();
+    const decoded = await new OfflineAudioContext(2, 1, AUDIO_SAMPLE_RATE).decodeAudioData(await blob.arrayBuffer());
+    got = Math.max(rms(decoded.getChannelData(0)), decoded.numberOfChannels > 1 ? rms(decoded.getChannelData(1)) : 0);
+  } catch {
+    throw new Error(`Slide ${slide}: the sound track of the exported video cannot be read back, so it is probably broken. Try again, or export without sound.`);
+  }
+  if (got < wanted * 0.25) {
+    throw new Error(`Slide ${slide}: the sound of the exported video came out silent on this device. Try again, or export without sound.`);
   }
 }
 
@@ -225,26 +228,23 @@ async function encodeMp4(project: Project, frame: ExportFrame, images: ImageStor
   if (!codec) throw new Error("This browser cannot encode H.264 video at this size.");
   const totalFrames = Math.max(1, Math.round(duration * VIDEO_FPS));
   const slide = createFrameStage(project, frame, images, size);
-  let failure: unknown = null;
-  let encoder: VideoEncoder | null = null;
+  let started: Output | null = null;
   const sources = new Map<string, DecodedSource | null>();
   const feeds = new Map<string, ClipFeed>();
   try {
     // Sound first: it decides whether the file gets an audio track at all.
     const mixed = opts.audio ? await mixAudio(slide.clips, slide.music, duration, images, opts.check) : null;
-    const muxer = new Muxer({
-      target: new ArrayBufferTarget(),
-      video: { codec: "avc", width: size.width, height: size.height, frameRate: VIDEO_FPS },
-      ...(mixed && opts.audio ? { audio: { codec: opts.audio, sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: 2 } } : {}),
-      fastStart: "in-memory",
-    });
-    encoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (e) => {
-        failure = e;
-      },
-    });
-    encoder.configure(videoEncoderConfig(codec, size, bitrate));
+    const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target: new BufferTarget() });
+    const pictures = new CanvasSource(slide.canvas, { codec: "avc", bitrate, keyFrameInterval: KEYFRAME_EVERY_S, latencyMode: "quality" });
+    output.addVideoTrack(pictures, { frameRate: VIDEO_FPS });
+    let sound: AudioBufferSource | null = null;
+    if (mixed) {
+      enableBundledAac();
+      sound = new AudioBufferSource({ codec: "aac", bitrate: AUDIO_BITRATE });
+      output.addAudioTrack(sound);
+    }
+    await output.start();
+    started = output;
     // Where the file can be decoded directly, frames are read forward once (fast). Other clips
     // are seeked frame by frame through a <video> element (slow, but works for every playable file).
     for (const el of slide.clips) {
@@ -260,27 +260,24 @@ async function encodeMp4(project: Project, frame: ExportFrame, images: ImageStor
       slide.videos.setFrameSource(el.id, { source: feed.canvas, width: feed.canvas.width, height: feed.canvas.height });
     }
     const seeked = slide.clips.filter((el) => !feeds.has(el.id));
-    const frameMicros = 1e6 / VIDEO_FPS;
     for (let i = 0; i < totalFrames; i++) {
       opts.check();
-      if (failure) throw failure;
       const time = i / VIDEO_FPS;
       for (const feed of feeds.values()) await feed.show(i);
       if (seeked.length > 0) await slide.videos.seekFrames(seeked, time);
       slide.draw(time);
-      const picture = new VideoFrame(slide.canvas, { timestamp: Math.round(i * frameMicros), duration: Math.round(frameMicros) });
-      encoder.encode(picture, { keyFrame: i % (VIDEO_FPS * KEYFRAME_EVERY_S) === 0 });
-      picture.close();
-      // Let the encoder catch up instead of queueing hundreds of raw frames in memory.
-      while (encoder.encodeQueueSize > 4) await sleep(1);
+      // add() waits while the encoder is busy, so raw frames never pile up in memory.
+      await pictures.add(time, 1 / VIDEO_FPS);
       opts.onProgress?.(i + 1, totalFrames);
       if (i % 10 === 9) await sleep(0); // keep the dialog responsive (progress, Cancel)
     }
-    await encoder.flush();
-    if (failure) throw failure;
-    if (mixed && opts.audio) await encodeAudio(mixed, opts.audio, muxer, opts.check);
-    muxer.finalize();
-    const blob = new Blob([muxer.target.buffer], { type: "video/mp4" });
+    if (sound && mixed) await sound.add(mixed);
+    opts.check();
+    await output.finalize();
+    started = null;
+    const buffer = output.target.buffer;
+    if (!buffer) throw new Error(`Slide ${frame.slideIndex + 1}: the encoder produced no file.`);
+    const blob = new Blob([buffer], { type: "video/mp4" });
 
     // Check that the file really is what was asked for.
     const info = await readVideoInfo(blob);
@@ -292,9 +289,10 @@ async function encodeMp4(project: Project, frame: ExportFrame, images: ImageStor
     if (Math.abs(info.duration - expected) > Math.max(0.15, 3 / VIDEO_FPS)) {
       throw new Error(`Slide ${frame.slideIndex + 1}: the MP4 is ${info.duration.toFixed(2)} s long, expected ${expected.toFixed(2)} s.`);
     }
+    if (mixed) await verifySound(blob, mixed, frame.slideIndex + 1);
     return { blob, ext: "mp4", width: size.width, height: size.height, duration: expected, hasAudio: !!mixed, realtime: false };
   } finally {
-    if (encoder && encoder.state !== "closed") encoder.close();
+    await started?.cancel().catch(() => undefined);
     for (const feed of feeds.values()) await feed.close();
     for (const source of sources.values()) source?.dispose();
     slide.destroy();

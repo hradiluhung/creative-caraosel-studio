@@ -13,6 +13,13 @@ import type { AssetRef, AudioTrack, DesignElement, Project, VideoElement } from 
 
 type ClipTiming = Pick<VideoElement, "start" | "trimStart" | "trimEnd" | "playbackRate" | "loop">;
 
+/**
+ * Longest a video slide can be. Instagram accepts at most 60 seconds per video in a carousel,
+ * so the editor never makes a slide longer: clips cannot be dragged or trimmed past it, and
+ * whatever still runs over (a slowed-down clip, an old document) is cut off there.
+ */
+export const MAX_VIDEO_SLIDE_SECONDS = 60;
+
 /** Shortest clip the editor creates (about one frame at 24 fps). */
 export const MIN_CLIP_SECONDS = 0.05;
 
@@ -57,8 +64,8 @@ export function videoElements(elements: DesignElement[]): VideoElement[] {
  * the last visible clip. 0 means the surface has no video (a still slide).
  */
 export function surfaceDuration(elements: DesignElement[], manual?: number): number {
-  if (manual !== undefined) return manual;
-  return videoElements(elements).reduce((max, el) => (el.visible ? Math.max(max, clipEnd(el)) : max), 0);
+  if (manual !== undefined) return Math.min(manual, MAX_VIDEO_SLIDE_SECONDS);
+  return Math.min(MAX_VIDEO_SLIDE_SECONDS, videoElements(elements).reduce((max, el) => (el.visible ? Math.max(max, clipEnd(el)) : max), 0));
 }
 
 /**
@@ -108,13 +115,25 @@ export function trimClipStart(el: ClipTiming, toSlideTime: number): ClipPatch {
 
 /** Drag the right edge: only trimEnd changes. */
 export function trimClipEnd(el: ClipTiming, toSlideTime: number, sourceDuration: number): ClipPatch {
-  const wanted = el.trimStart + (toSlideTime - el.start) * el.playbackRate;
+  const wanted = el.trimStart + (Math.min(toSlideTime, MAX_VIDEO_SLIDE_SECONDS) - el.start) * el.playbackRate;
   return { trimEnd: Math.min(Math.max(wanted, el.trimStart + MIN_CLIP_SECONDS), Math.max(sourceDuration, el.trimStart + MIN_CLIP_SECONDS)) };
 }
 
 /** Drag the whole clip along the slide. */
-export function moveClip(el: ClipTiming, toStart: number, maxStart: number): ClipPatch {
+export function moveClip(el: ClipTiming, toStart: number, maxStart = MAX_VIDEO_SLIDE_SECONDS - clipDuration(el)): ClipPatch {
   return { start: Math.min(Math.max(0, toStart), Math.max(0, maxStart)) };
+}
+
+/**
+ * The stretch of slide time a clip could cover if it were untrimmed again: from where its
+ * first source frame would sit to where its last one would. The timeline keeps this visible,
+ * so a trimmed edge can always be dragged back out.
+ */
+export function clipReach(el: ClipTiming, sourceDuration: number): { from: number; to: number } {
+  return {
+    from: Math.max(0, el.start - el.trimStart / el.playbackRate),
+    to: Math.min(MAX_VIDEO_SLIDE_SECONDS, el.start + Math.max(0, sourceDuration - el.trimStart) / el.playbackRate),
+  };
 }
 
 /**

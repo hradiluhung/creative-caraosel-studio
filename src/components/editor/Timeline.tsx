@@ -4,9 +4,10 @@ import { ChevronDown, ChevronUp, Music, Scissors, Trash2, ZoomIn, ZoomOut } from
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getSurface, PANORAMA_ID } from "@/document/geometry";
 import type { AudioTrack, DesignElement, VideoElement } from "@/document/schema";
-import { clipDuration, clipEnd, formatSeconds, moveClip, splitClip, surfaceDuration, trackEnd, trimClipEnd, trimClipStart, videoElements } from "@/document/timing";
+import { clipDuration, clipEnd, clipReach, formatSeconds, MAX_VIDEO_SLIDE_SECONDS, moveClip, splitClip, surfaceDuration, trackEnd, trimClipEnd, trimClipStart, videoElements } from "@/document/timing";
 import { AUDIO_ACCEPT_ATTR } from "@/persistence/audio";
 import { getAssetPeaks } from "@/persistence/db";
+import { proxyState, subscribeProxies } from "@/persistence/proxy";
 import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/lib/useMediaQuery";
 import { useEditorStore } from "@/store/editorStore";
@@ -44,6 +45,8 @@ export function Timeline() {
   const [zoom, setZoom] = useState(1);
   const [viewWidth, setViewWidth] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [, setProxyTick] = useState(0);
+  useEffect(() => subscribeProxies(() => setProxyTick((t) => t + 1)), []);
   const musicInput = useRef<HTMLInputElement>(null);
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicError, setMusicError] = useState<string | null>(null);
@@ -74,15 +77,21 @@ export function Timeline() {
 
   const duration = surfaceDuration(surface.elements, surface.duration);
   const autoDuration = surfaceDuration(surface.elements);
-  // The ruler always covers every clip, also when a manual slide length cuts some of them off.
-  const span = Math.max(duration, clips.reduce((max, el) => Math.max(max, clipEnd(el)), 0), 0.5);
+  const assetDuration = (el: VideoElement) => project.assets.find((a) => a.id === el.assetId)?.duration ?? el.trimEnd;
+  // The ruler covers everything a clip could be stretched back to, not only what is left after
+  // trimming. Otherwise a trimmed clip would fill the width again and its handle would have no
+  // room to be dragged back out. It never shows more than a video slide may last.
+  const span = Math.min(
+    MAX_VIDEO_SLIDE_SECONDS,
+    Math.max(duration, clips.reduce((max, el) => Math.max(max, clipEnd(el), clipReach(el, assetDuration(el)).to), 0), 0.5),
+  );
+  const overLimit = clips.some((el) => el.visible && clipEnd(el) > MAX_VIDEO_SLIDE_SECONDS + 1e-6);
   const fit = Math.max(1, viewWidth - PAD * 2) / span;
   // Short clips already fill the width at more than the usual limit: always allow a few zoom steps.
   const maxPxPerSecond = Math.max(MAX_PX_PER_SECOND, fit * 4);
   const pxPerSecond = Math.min(maxPxPerSecond, fit * zoom);
   const width = span * pxPerSecond;
   const time = playback === "stopped" ? 0 : playhead;
-  const assetDuration = (el: VideoElement) => project.assets.find((a) => a.id === el.assetId)?.duration ?? el.trimEnd;
   const tick = TICK_STEPS.find((s) => s * pxPerSecond >= 56) ?? 60;
   const ticks = Array.from({ length: Math.floor(span / tick + 1e-6) + 1 }, (_, i) => i * tick);
 
@@ -121,6 +130,9 @@ export function Timeline() {
     drag(event, (delta) => at(event.clientX + delta * pxPerSecond));
   };
 
+  // Progress of the preview proxy of a heavy clip on this slide, if one is being made right now.
+  const working = clips.map((el) => proxyState(el.assetId)).find((state) => state?.status === "working");
+  const preparing = working?.status === "working" ? working.progress : null;
   const others = surface.elements.filter((el) => el.type !== "video" && el.visible);
   const music = surface.audio;
   const onMusicFile = async (file: File | undefined) => {
@@ -137,6 +149,11 @@ export function Timeline() {
       {notice && (
         <p role="status" className="border-b border-line px-3 py-1.5 text-[11px]">
           {notice}
+        </p>
+      )}
+      {preparing !== null && (
+        <p role="status" data-testid="proxy-status" className="border-b border-line px-3 py-1.5 text-[11px] text-muted">
+          Preparing a lighter copy of this video for smooth playback: {Math.round(preparing * 100)}%. You can keep working; exports always use the original.
         </p>
       )}
       <div className="flex items-center gap-1 px-2 py-1">
@@ -322,7 +339,7 @@ export function Timeline() {
                   label="Slide length"
                   prefix="s"
                   min={0.1}
-                  max={600}
+                  max={MAX_VIDEO_SLIDE_SECONDS}
                   step={0.5}
                   decimals={2}
                   value={Number(duration.toFixed(2))}
@@ -330,7 +347,13 @@ export function Timeline() {
                   onChange={(v) => setActiveSlideDuration(v)}
                 />
               </div>
-              <span className="truncate text-[11px] text-muted">{surface.duration === undefined ? "Follows the last clip." : "Clips that run longer are cut off; a looping clip fills the rest."}</span>
+              <span className="truncate text-[11px] text-muted" data-testid="slide-length-hint">
+                {overLimit
+                  ? "A video slide can be 60 s at most (Instagram's limit): what runs longer is cut off."
+                  : surface.duration === undefined
+                    ? "Follows the last clip, up to 60 s."
+                    : "Clips that run longer are cut off; a looping clip fills the rest."}
+              </span>
             </div>
           )}
         </>
@@ -362,6 +385,7 @@ function ClipRow({
   onPatch: (patch: Partial<VideoElement>, coalesceKey: string, showAt: number) => void;
 }) {
   const length = clipDuration(el);
+  const reach = clipReach(el, sourceDuration);
   const left = el.start * pxPerSecond;
   const barWidth = Math.max(6, length * pxPerSecond);
   const editable = !el.locked;
@@ -369,6 +393,15 @@ function ClipRow({
 
   return (
     <li className="relative h-8" style={{ width }} data-testid="clip-row">
+      {/* What trimming has cut away: the handles can be dragged back out over it */}
+      {reach.to - reach.from > length + 1e-3 && (
+        <div
+          aria-hidden
+          data-testid="clip-reach"
+          className="absolute top-1.5 bottom-1.5 rounded-[4px] border border-dashed border-line"
+          style={{ left: reach.from * pxPerSecond, width: Math.max(0, (Math.min(reach.to, span) - reach.from) * pxPerSecond) }}
+        />
+      )}
       {/* A looping clip keeps going until the slide ends */}
       {el.loop && span > clipEnd(el) && (
         <div aria-hidden className="absolute top-1 bottom-1 rounded-r-[4px] border border-dashed border-line bg-sunken/60" style={{ left: left + barWidth, width: (span - clipEnd(el)) * pxPerSecond }} />
@@ -396,7 +429,7 @@ function ClipRow({
           drag(
             e,
             (delta) => {
-              const patch = moveClip(el, from + delta, 600 - length);
+              const patch = moveClip(el, from + delta);
               onPatch(patch, "timeline-move", patch.start ?? from);
             },
             onSelect,

@@ -12,6 +12,7 @@ import puppeteer from "puppeteer-core";
 
 const BASE = process.env.BASE_URL || "http://localhost:3210";
 const FIXTURES = process.env.FIXTURES || "/tmp/fixtures";
+const CLIP = process.env.PERF_CLIP || "big.mp4";
 const RATE = Number(process.env.CPU_THROTTLE || 4);
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome", headless: true, args: ["--no-sandbox"] });
 const page = await browser.newPage();
@@ -41,8 +42,30 @@ if (!process.env.VIDEO_ONLY) {
   await (await page.waitForSelector('[data-testid="image-input"]')).uploadFile(`${FIXTURES}/photo-a.jpg`);
   await sleep(1500);
 }
-await (await page.waitForSelector('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/big.mp4`);
-await page.waitForSelector('[aria-label="Add video big.mp4"]', { timeout: 30000 });
+await (await page.waitForSelector('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/${CLIP}`);
+await page.waitForSelector(`[aria-label="Add video ${CLIP}"]`, { timeout: 30000 });
+// A heavy clip gets a lighter preview copy first: measure what the user gets after that.
+if (!process.env.NO_PROXY_WAIT) {
+  const state = await page.evaluate(async () => {
+    const read = () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open("creative-carousel-studio");
+        req.onsuccess = () => {
+          const all = req.result.transaction("assets").objectStore("assets").getAll();
+          all.onsuccess = () => resolve(all.result.filter((a) => a.mime.startsWith("video/")).map((a) => ({ w: a.width, h: a.height, proxy: a.proxy?.size ?? 0 })));
+        };
+      });
+    for (let i = 0; i < 360; i++) {
+      const videos = await read();
+      // Small sources never get a proxy; heavy ones are measured once theirs is stored.
+      if (videos.every((v) => v.proxy > 0 || Math.min(v.w, v.h) <= 720)) return videos;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return "no proxy after 3 minutes";
+  });
+  console.log("video assets:", JSON.stringify(state));
+  await sleep(1000);
+}
 await tapText("Done").catch(() => {});
 await sleep(1000);
 
@@ -69,7 +92,7 @@ const r = await page.evaluate(() => {
   const sum = f.reduce((a, b) => a + b, 0);
   return { n: f.length, fps: (f.length / sum) * 1000, median: f[Math.floor(f.length / 2)], p95: f[Math.floor(f.length * 0.95)], worst: f[f.length - 1], over50: f.filter((x) => x > 50).length, seeks: globalThis.__seeks };
 });
-console.log(`CPU throttle ${RATE}x, 6 s clip played in ${wall.toFixed(1)} s`);
+console.log(`CPU throttle ${RATE}x, ${CLIP} played in ${wall.toFixed(1)} s`);
 console.log(`painted frames ${r.n} (${r.fps.toFixed(1)} per second), median ${r.median.toFixed(0)} ms, p95 ${r.p95.toFixed(0)} ms, worst ${r.worst.toFixed(0)} ms, stalls over 50 ms: ${r.over50}`);
 console.log(`forced seeks while playing: ${r.seeks}`);
 await browser.close();

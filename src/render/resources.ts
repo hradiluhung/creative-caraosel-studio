@@ -55,6 +55,8 @@ type Entry = {
   url?: string;
   /** Object URL of the video or audio file itself. */
   videoUrl?: string;
+  /** Object URL of a video's preview proxy. */
+  previewUrl?: string;
   promise: Promise<void>;
 };
 
@@ -79,6 +81,8 @@ export class ImageStore implements RenderResources {
   constructor(
     private loader: BlobLoader,
     private posterLoader?: BlobLoader,
+    /** Returns a video's preview proxy, when it has one (optional). */
+    private proxyLoader?: BlobLoader,
   ) {
     this.videos = new VideoPool(this.videoSource, () => this.listeners.forEach((l) => l()));
     this.music = new MusicPlayer((assetId) => this.getAudioUrl(assetId));
@@ -87,7 +91,7 @@ export class ImageStore implements RenderResources {
   private videoSource = (assetId: string) => {
     const entry = this.entries.get(assetId);
     if (!entry) void this.load(assetId);
-    return entry?.status === "ready" && entry.kind === "video" && entry.videoUrl ? { url: entry.videoUrl, poster: entry.image } : undefined;
+    return entry?.status === "ready" && entry.kind === "video" && entry.videoUrl ? { url: entry.videoUrl, previewUrl: entry.previewUrl, poster: entry.image } : undefined;
   };
 
   getVideoFrame(el: VideoElement, opts: VideoFrameOptions) {
@@ -107,6 +111,17 @@ export class ImageStore implements RenderResources {
       getVideoFrame: (el, opts) => videos.frame(el, opts),
     };
     return { resources, videos };
+  }
+
+  /** A preview proxy was just stored for this video: start playing it instead of the original. */
+  async refreshPreview(assetId: string) {
+    const entry = this.entries.get(assetId);
+    if (!entry || entry.kind !== "video" || entry.previewUrl) return;
+    const proxy = await this.proxyLoader?.(assetId).catch(() => undefined);
+    if (!proxy || this.entries.get(assetId) !== entry) return;
+    entry.previewUrl = URL.createObjectURL(proxy);
+    this.videos.refreshSource(assetId);
+    this.listeners.forEach((l) => l());
   }
 
   /** The stored original of an asset (the exporter decodes sound from it). */
@@ -370,6 +385,8 @@ export class ImageStore implements RenderResources {
           // The stored still is only a quick preview: a video without one is still usable.
           const poster = await this.posterLoader?.(assetId).catch(() => undefined);
           if (poster) await decode(poster).catch(() => undefined);
+          const proxy = await this.proxyLoader?.(assetId).catch(() => undefined);
+          if (proxy) entry.previewUrl = URL.createObjectURL(proxy);
         } else {
           await decode(blob);
         }
@@ -402,6 +419,7 @@ export class ImageStore implements RenderResources {
     for (const e of this.entries.values()) {
       if (e.url) URL.revokeObjectURL(e.url);
       if (e.videoUrl) URL.revokeObjectURL(e.videoUrl);
+      if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);
     }
     this.entries.clear();
     this.listeners.clear();

@@ -43,6 +43,7 @@ src/
   export/                 exporter.ts (render, verify, zip, download)  naming.ts
                           video.ts (MP4 per slide)  frameSource.ts (decoded frames)  videoSupport.ts
   persistence/            db.ts (IndexedDB)  assets.ts (import + validation)  video.ts  audio.ts  videoSniff.ts
+                          proxy.ts (light preview copies of heavy videos)
   store/                  editorStore.ts
   components/
     ui/                   small design-system primitives (button, fields, dialog, sheet, menu)
@@ -160,8 +161,8 @@ IndexedDB database `creative-carousel-studio` (via `idb`):
 | zod | document validation |
 | idb | promise wrapper for IndexedDB |
 | jszip | ZIP packaging of exports |
-| mp4-muxer | writes the MP4 container for video exports |
-| mediabunny | reads and decodes source videos frame by frame for export |
+| mediabunny | video export (decodes source frames, encodes H.264, writes MP4) and preview proxies |
+| @mediabunny/aac-encoder | WebAssembly AAC encoder, so sound does not depend on the browser's encoders |
 | lucide-react | icons |
 | @fontsource/* | self-hosted font files |
 | vitest, fake-indexeddb, puppeteer-core (dev) | unit and end-to-end tests |
@@ -304,12 +305,20 @@ Decisions:
   moment of muted playback. Import only needs the metadata; the stored poster still is best effort.
 - **Export draws every frame with the scene builder** (`src/export/video.ts`): the slide is built once
   on an off-screen stage at output size and only the video nodes are refreshed per frame, with
-  `videoTime = frame / 30`. Encoding is WebCodecs H.264 muxed with `mp4-muxer`; frames come from
-  `mediabunny` (demux + `VideoDecoder`, forward only) because seeking a `<video>` per frame is an order
-  of magnitude slower; sound is mixed with `OfflineAudioContext`. Without WebCodecs the slide is
+  `videoTime = frame / 30`. mediabunny does the media work: source frames are demuxed and decoded
+  forward once with `VideoDecoder` (seeking a `<video>` per frame is an order of magnitude slower),
+  H.264 is encoded with WebCodecs, and sound, mixed with `OfflineAudioContext`, is encoded by a
+  bundled WebAssembly AAC encoder because the browsers' own AAC encoders were unreliable (silent files
+  on a Mac and an iPhone, none at all in Chrome on Linux). Without WebCodecs the slide is
   recorded in real time with `MediaRecorder`. One file per slide, packaged in slide order; slides are
   never merged. The dialog reports what the device can really produce (feature detection in
-  `videoSupport.ts`), and each MP4 is reopened to check its size and duration.
+  `videoSupport.ts`), and each MP4 is reopened to check its size, its duration and that its sound
+  track is not silent.
+- **Heavy sources get a preview proxy** (`persistence/proxy.ts`): above 720p or 8 Mbit/s, a 720p /
+  30 fps copy is made in the background and played by the editor. Poster frames and exports always
+  come from the untouched original (`VideoSource.previewUrl` is only used by the editor's pool).
+- **A video slide is at most 60 seconds** (`MAX_VIDEO_SLIDE_SECONDS`, Instagram's limit per carousel
+  video): enforced by the trim / move helpers and by `surfaceDuration`, not by the schema.
 - **Music has one gain curve** (`trackGainAt` in `timing.ts`): the preview (`render/musicPlayer.ts`, an
   `<audio>` element kept in step with the clock) and the export (`mixAudio`, linear ramps between the
   curve's corner points) both follow it.
@@ -319,7 +328,7 @@ Decisions:
 - Live `<video>` elements exist only while a slide is playing or paused and are released on stop,
   because phones allow only a few video decoders at a time.
 
-Verification: 95 unit tests in total; `tests/e2e-phase3.mjs` (105 checks in Chrome) covers import,
+Verification: 100 unit tests in total; `tests/e2e-phase3.mjs` (115 checks in Chrome) covers import,
 poster frames in editor and export pixels, playback, pause, trim, properties, mask, crop, flip, reload,
 undo, the timeline (scrub, split, trim, move, zoom, slide length) and video export (mixed ZIP, frame
 content, duration, sound track, fallback) and background music (import, waveform, fades measured in
@@ -329,8 +338,7 @@ rough smoothness measurement for a slow phone.
 ## 13. Known limitations (honest list)
 
 - **Video (Phase 3):** import was confirmed on an iPhone; playback smoothness there, the timeline, MP4
-  export and music were only verified in desktop Chrome (export with Opus sound; AAC could not be
-  tested there). No filters on video. On iOS the preview ignores volume and fades (the export applies
+  export, music and preview proxies were only verified in desktop Chrome. No filters on video. On iOS the preview ignores volume and fades (the export applies
   them). Music needs a slide with video; a seamless panorama has no music track.
   Which codecs can be imported depends on the browser (for example HEVC MOV files play in Safari, not
   in every other browser); the import says so instead of failing silently.

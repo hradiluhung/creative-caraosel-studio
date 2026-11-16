@@ -18,6 +18,7 @@ import {
   type TextElement,
   type VideoElement,
 } from "./schema";
+import { MAX_VIDEO_SLIDE_SECONDS } from "./timing";
 
 export const DEFAULT_BACKGROUND: Background = { type: "solid", color: "#ffffff" };
 
@@ -179,7 +180,8 @@ export function createVideo(asset: AssetRef, p: Placement): VideoElement {
     height,
     start: 0,
     trimStart: 0,
-    trimEnd: asset.duration ?? 1,
+    // A new clip never makes its slide longer than a video slide may be.
+    trimEnd: Math.min(asset.duration ?? 1, MAX_VIDEO_SLIDE_SECONDS),
     volume: 1,
     muted: false,
     playbackRate: 1,

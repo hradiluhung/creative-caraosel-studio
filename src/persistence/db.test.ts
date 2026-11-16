@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
+import { needsProxy } from "./proxy";
 import { createImage, createProject, createShape, createVideo } from "@/document/factory";
 import { DocumentError } from "@/document/migrations";
 import * as ops from "@/document/operations";
@@ -10,6 +11,8 @@ import {
   duplicateStoredProject,
   getAssetBlob,
   getAssetPoster,
+  getAssetProxy,
+  putAssetProxy,
   listProjects,
   loadProject,
   putAsset,
@@ -102,6 +105,22 @@ describe("project persistence", () => {
     await deleteProject(p.id);
     expect(await getAssetBlob("clip")).toBeUndefined();
     expect(await getAssetPoster("clip")).toBeUndefined();
+  });
+
+  it("attaches a preview proxy to a stored video without touching the original", async () => {
+    const clip = { id: "heavy", name: "heavy.mp4", mime: "video/mp4", width: 3840, height: 2160, size: 9, duration: 8 };
+    await putAsset({ ...clip, blob: new Blob(["original!"], { type: "video/mp4" }), createdAt: "2026-11-16" });
+    expect(await getAssetProxy("heavy")).toBeUndefined();
+    await putAssetProxy("heavy", new Blob(["small"], { type: "video/mp4" }));
+    expect((await getAssetProxy("heavy"))?.size).toBe(5);
+    expect((await getAssetBlob("heavy"))?.size).toBe(9);
+    await putAssetProxy("gone", new Blob(["x"])); // the asset was deleted meanwhile: nothing is created
+    expect(await getAssetBlob("gone")).toBeUndefined();
+    expect(needsProxy(clip)).toBe(true);
+    expect(needsProxy({ ...clip, width: 1280, height: 720, size: 2_000_000 })).toBe(false);
+    expect(needsProxy({ ...clip, width: 1280, height: 720, size: 20_000_000 })).toBe(true); // 20 Mbit/s
+    expect(needsProxy({ ...clip, width: 1080, height: 1920 })).toBe(true);
+    expect(needsProxy({ ...clip, mime: "image/jpeg" })).toBe(false);
   });
 
   it("refuses to load corrupted stored data", async () => {

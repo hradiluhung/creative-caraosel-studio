@@ -9,7 +9,7 @@ import { getExportFrames, getSurfaces } from "./geometry";
 import { DocumentError, parseProject } from "./migrations";
 import * as ops from "./operations";
 import { isAudioAsset, isVideoAsset, projectSchema, SCHEMA_VERSION, type AssetRef, type Project } from "./schema";
-import { audioTimeAt, clampTrim, clipActive, createAudioTrack, trackActive, trackEnd, trackGainAt, trackGainPoints, clipDuration, clipEnd, clipEnded, formatSeconds, frameClips, frameDuration, MIN_CLIP_SECONDS, moveClip, splitClip, surfaceDuration, trimClipEnd, trimClipStart, videoTimeAt } from "./timing";
+import { audioTimeAt, clampTrim, clipActive, clipReach, MAX_VIDEO_SLIDE_SECONDS, createAudioTrack, trackActive, trackEnd, trackGainAt, trackGainPoints, clipDuration, clipEnd, clipEnded, formatSeconds, frameClips, frameDuration, MIN_CLIP_SECONDS, moveClip, splitClip, surfaceDuration, trimClipEnd, trimClipStart, videoTimeAt } from "./timing";
 
 const place = { centerX: 540, centerY: 675, maxWidth: 1080, maxHeight: 1350 };
 const clip: AssetRef = { id: "v1", name: "beach.mp4", mime: "video/mp4", width: 1920, height: 1080, size: 5_000_000, duration: 8 };
@@ -211,8 +211,43 @@ describe("timeline operations", () => {
     expect(ops.setSlideDuration(timed, surfaceId, 12)).toBe(timed);
     const auto = ops.setSlideDuration(timed, surfaceId, undefined);
     expect("duration" in auto.slides[0]).toBe(false);
-    expect(ops.setSlideDuration(project, surfaceId, 99_999).slides[0].duration).toBe(600);
+    expect(ops.setSlideDuration(project, surfaceId, 99_999).slides[0].duration).toBe(60);
     expect(projectSchema.safeParse(ops.setSlideDuration(project, surfaceId, 0)).success).toBe(true);
+  });
+});
+
+describe("the 60 second limit of a video slide", () => {
+  const long: AssetRef = { ...clip, id: "v9", duration: 300 }; // a five minute source
+
+  it("starts a long video as its first 60 seconds", () => {
+    const el = createVideo(long, place);
+    expect(el.trimEnd).toBe(60);
+    expect(clipDuration(el)).toBe(MAX_VIDEO_SLIDE_SECONDS);
+    expect(createVideo(clip, place).trimEnd).toBe(8);
+  });
+
+  it("never lets a trim or a move push a clip past 60 seconds", () => {
+    const el = createVideo(long, place);
+    expect(trimClipEnd(el, 200, 300)).toEqual({ trimEnd: 60 });
+    expect(trimClipEnd({ ...el, start: 20, trimEnd: 30 }, 200, 300)).toEqual({ trimEnd: 40 }); // 20 + 40 = 60
+    expect(trimClipEnd({ ...el, playbackRate: 2 }, 200, 300)).toEqual({ trimEnd: 120 }); // 120 s of source in 60 s
+    expect(moveClip({ ...el, trimEnd: 10 }, 999)).toEqual({ start: 50 });
+    expect(moveClip(el, 5)).toEqual({ start: 0 });
+  });
+
+  it("cuts off whatever still runs over", () => {
+    const slow = { ...createVideo(long, place), playbackRate: 0.5 }; // 120 s on the slide
+    expect(surfaceDuration([slow])).toBe(60);
+    expect(surfaceDuration([slow], 90)).toBe(60);
+    expect(surfaceDuration([slow], 12)).toBe(12);
+  });
+
+  it("knows how far a trimmed clip can be stretched back out", () => {
+    const el = { start: 4, trimStart: 2, trimEnd: 5, playbackRate: 1, loop: false }; // on the slide 4..7, source is 8 s
+    expect(clipReach(el, 8)).toEqual({ from: 2, to: 10 });
+    expect(clipReach({ ...el, playbackRate: 2 }, 8)).toEqual({ from: 3, to: 7 });
+    expect(clipReach({ ...el, start: 1 }, 8)).toEqual({ from: 0, to: 7 });
+    expect(clipReach(el, 300).to).toBe(60);
   });
 });
 

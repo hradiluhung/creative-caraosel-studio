@@ -23,6 +23,8 @@ export interface VideoFrameOptions {
 
 export interface VideoSource {
   url: string;
+  /** A lighter copy of the same video for live playback (preview proxy), when there is one. */
+  previewUrl?: string;
   /** Small stored still, shown until the exact poster frame has been captured. */
   poster?: HTMLImageElement;
 }
@@ -34,6 +36,8 @@ type Live = {
   fresh: boolean;
   /** False where requestVideoFrameCallback is missing: then every tick may carry a new frame. */
   tracksFrames: boolean;
+  /** The asset got a preview proxy since this video was created: replaced at the next sync. */
+  stale?: boolean;
   cleanup: () => void;
 };
 
@@ -318,7 +322,7 @@ export class VideoPool {
 
   private acquire(el: VideoElement): Live | undefined {
     const hit = this.live.get(el.id);
-    if (hit?.assetId === el.assetId) return hit;
+    if (hit?.assetId === el.assetId && !hit.stale) return hit;
     if (hit) {
       hit.cleanup();
       this.live.delete(el.id);
@@ -330,7 +334,9 @@ export class VideoPool {
     video.setAttribute("playsinline", "");
     video.preload = "auto";
     video.muted = this.silent || el.muted || this.audioBlocked;
-    video.src = src.url;
+    // The editor plays the light proxy when there is one. The exporter's pool never does:
+    // exports are made from the original.
+    video.src = this.silent ? src.url : (src.previewUrl ?? src.url);
     // The export resamples sound when a clip is sped up or slowed down, which shifts its pitch.
     // The preview does the same, so what is heard here is what gets exported.
     if ("preservesPitch" in video) video.preservesPitch = false;
@@ -384,6 +390,11 @@ export class VideoPool {
       void video.play().catch(() => undefined);
       this.audioListeners.forEach((l) => l());
     });
+  }
+
+  /** A preview proxy for this asset has arrived: live videos of it switch over at their next sync. */
+  refreshSource(assetId: string) {
+    for (const entry of this.live.values()) if (entry.assetId === assetId) entry.stale = true;
   }
 
   /** A fresh tap on play is a new chance to get sound. */

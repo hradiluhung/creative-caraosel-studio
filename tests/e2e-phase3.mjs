@@ -13,6 +13,9 @@
  *     ffmpeg -f lavfi -i "color=c=red:s=160x240:d=1:r=30" -f lavfi -i "color=c=blue:s=160x240:d=1:r=30" \
  *       -filter_complex "[0:v][1:v]hstack=inputs=2[v]" -map "[v]" -c:v libx264 -pix_fmt yuv420p -movflags +faststart sides.mp4
  *   fake.mp4   any text file with that name
+ *   heavy.mp4  8 s, 3840x2160, 60 fps, about 20 Mbit/s (a "phone camera" clip):
+ *     ffmpeg -f lavfi -i "testsrc2=s=3840x2160:r=60:d=8" -f lavfi -i "sine=frequency=330:duration=8" -c:v libx264 \
+ *       -preset ultrafast -b:v 20M -pix_fmt yuv420p -g 60 -movflags +faststart -c:a aac -shortest heavy.mp4
  *   music.wav  3 s tone at constant loudness:  ffmpeg -f lavfi -i "sine=frequency=660:duration=3" -ac 2 -ar 44100 music.wav
  *   music.mp3  the same:  ffmpeg -i music.wav -b:a 128k music.mp3
  *   fake.mp3   any text file with that name
@@ -402,6 +405,26 @@ try {
   vs = await videos();
   ok("a whole trim drag is one undo step", vs.length === 2 && Math.abs(vs[1].trimEnd - 2) < 0.1, String(vs[1]?.trimEnd));
 
+  // After trimming, the timeline keeps showing what was cut away, so the handle can be dragged back out.
+  await dragBy(L("Trim end of clip (2)"), -quarter);
+  await saved();
+  const rulerNow = await ruler();
+  tl = await bars();
+  const trimmed = tl.find((b) => b.name === "Clip clip (2)");
+  const handleBox = await (await page.$(L("Trim end of clip (2)"))).boundingBox();
+  ok(
+    "a trimmed clip does not fill the timeline again: there is room right of its handle",
+    Math.abs(rulerNow.width - quarter * 4) < 4 && Math.abs(trimmed.width - quarter) < 6 && rulerNow.x + rulerNow.width - (handleBox.x + handleBox.width) > quarter * 0.8 && !!(await page.$('[data-testid="clip-reach"]')),
+    `ruler ${rulerNow.width.toFixed(0)}, bar ${trimmed.width.toFixed(0)}`,
+  );
+  await dragBy(L("Trim end of clip (2)"), quarter);
+  await saved();
+  vs = await videos();
+  ok("and the same handle stretches the clip back to its full length", Math.abs(vs[1].trimEnd - 2) < 0.06, String(vs[1].trimEnd));
+  await dragBy(L("Trim end of clip (2)"), quarter * 2);
+  await saved();
+  ok("but never past the end of the source", Math.abs((await videos())[1].trimEnd - 2) < 0.06);
+
   // Trim the first half from its left edge: start and trimStart move together, the cut stays.
   const span2 = (await ruler()).width / 2; // pixels per second
   await dragBy(L("Trim start of clip"), span2 * 0.4);
@@ -490,6 +513,24 @@ try {
       mime,
       times,
     );
+  /** Loudness (RMS) of slices of the sound in an exported file, decoded in the browser. */
+  const loudness = (buf, slices) =>
+    page.evaluate(
+      async (b64, parts) => {
+        const data = await (await fetch(`data:video/mp4;base64,${b64}`)).arrayBuffer();
+        const audio = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data);
+        const ch = audio.getChannelData(0);
+        return parts.map(([from, to]) => {
+          let sum = 0;
+          const a = Math.floor(from * audio.sampleRate);
+          const b = Math.min(ch.length, Math.floor(to * audio.sampleRate));
+          for (let i = a; i < b; i++) sum += ch[i] * ch[i];
+          return Math.sqrt(sum / Math.max(1, b - a));
+        });
+      },
+      Buffer.from(buf).toString("base64"),
+      slices,
+    );
   const isMp4 = (buf) => buf.subarray(4, 8).toString("latin1") === "ftyp";
   const isJpeg = (buf) => buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
   const hasBox = (buf, name) => buf.includes(Buffer.from(name, "latin1"));
@@ -527,7 +568,7 @@ try {
   const summary = await page.$eval('[data-testid="video-summary"]', (n) => n.textContent);
   const soundOptions = await page.$$eval('[role="radiogroup"][aria-label="Sound"] [role="radio"]', (ns) => ns.map((n) => n.textContent));
   ok("export dialog says what this browser will produce", /^MP4 \(H\.264\)/.test(note) && summary.startsWith("1080 × 1350, 30 fps"), `${note} | ${summary}`);
-  ok("and offers the sound codecs it can really encode", soundOptions.includes("No sound") && soundOptions.length >= 2, soundOptions.join());
+  ok("and offers sound or no sound", soundOptions.join() === "With sound,No sound" && note.includes("AAC sound"), soundOptions.join());
   ok("it announces a mixed ZIP", !!(await page.$("p ::-p-text(2 JPG and 1 video)")));
   await runExport("Export 3 slides");
   const zipBuf = await download("mixed-export-slides.zip");
@@ -537,7 +578,9 @@ try {
   ok("mixed project exports one ordered ZIP: photo, video, photo", names.join() === "mixed-export-01.jpg,mixed-export-02.mp4,mixed-export-03.jpg", names.join());
   const entries = await Promise.all(names.map((n) => zip.files[n].async("nodebuffer")));
   ok("file types match their names", isJpeg(entries[0]) && isMp4(entries[1]) && isJpeg(entries[2]));
-  ok("the MP4 has an H.264 track and a sound track", hasBox(entries[1], "avc1") && (hasBox(entries[1], "mp4a") || hasBox(entries[1], "Opus")));
+  ok("the MP4 has an H.264 track and an AAC sound track", hasBox(entries[1], "avc1") && hasBox(entries[1], "mp4a") && !hasBox(entries[1], "Opus"));
+  const clipSound = await loudness(entries[1], [[0.3, 1.7]]);
+  ok("and the clip's own sound is really audible in it", clipSound[0] > 0.02, clipSound[0].toFixed(4));
   let mp4 = await inspectVideo(entries[1], "video/mp4", [0, 0.9, 1.1, 1.9]);
   ok("MP4 has the slide size", mp4.width === 1080 && mp4.height === 1350, `${mp4.width}x${mp4.height}`);
   ok("MP4 duration matches the slide (2 s)", Math.abs(mp4.duration - 2) < 0.1, String(mp4.duration));
@@ -563,7 +606,7 @@ try {
   mp4 = await inspectVideo(single, "video/mp4", [0, 0.7]);
   ok("a single video slide downloads as one MP4 at 720p", isMp4(single) && mp4.width === 720 && mp4.height === 900, `${mp4.width}x${mp4.height}`);
   ok("trim reaches the export: 0.8 s long and blue from the first frame", Math.abs(mp4.duration - 0.8) < 0.1 && isBlue(mp4.colors[0].center) && isBlue(mp4.colors[1].center), `${mp4.duration} ${mp4.colors[0].center}`);
-  ok("choosing no sound leaves the sound track out", !hasBox(single, "mp4a") && !hasBox(single, "Opus"));
+  ok("choosing no sound leaves the sound track out", !hasBox(single, "mp4a"));
 
   // A split clip exports as one continuous video.
   await setField("Trim start", 0);
@@ -585,24 +628,6 @@ try {
 
   // ---------- C4: background music ----------
   const slide2 = async () => (await readDoc()).slides[1];
-  /** Loudness (RMS) of slices of the sound in an exported file, decoded in the browser. */
-  const loudness = (buf, slices) =>
-    page.evaluate(
-      async (b64, parts) => {
-        const data = await (await fetch(`data:video/mp4;base64,${b64}`)).arrayBuffer();
-        const audio = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data);
-        const ch = audio.getChannelData(0);
-        return parts.map(([from, to]) => {
-          let sum = 0;
-          const a = Math.floor(from * audio.sampleRate);
-          const b = Math.min(ch.length, Math.floor(to * audio.sampleRate));
-          for (let i = a; i < b; i++) sum += ch[i] * ch[i];
-          return Math.sqrt(sum / Math.max(1, b - a));
-        });
-      },
-      Buffer.from(buf).toString("base64"),
-      slices,
-    );
   // Silence the clips so that everything heard in the export is the music.
   for (const name of ["Clip clip", "Clip clip (2)"]) {
     await click(L(name));
@@ -650,7 +675,7 @@ try {
   let withMusic = await download("mixed-export-02.mp4");
   await clickText("Done");
   let levels = await loudness(withMusic, [[0.02, 0.2], [1.2, 1.8]]);
-  ok("exported video carries the music (clips are muted)", (hasBox(withMusic, "mp4a") || hasBox(withMusic, "Opus")) && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
+  ok("exported video carries the music as AAC (clips are muted)", hasBox(withMusic, "mp4a") && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
   ok("with the fade in: quiet at the start, full after one second", levels[0] < levels[1] * 0.35, levels.map((v) => v.toFixed(4)).join(" "));
 
   // Start the music one second into the slide: the first second of the export is silent.
@@ -686,6 +711,50 @@ try {
   ok("MP3 is imported by signature with its length", doc.assets.some((a) => a.mime === "audio/mpeg" && Math.abs(a.duration - 3) < 0.2) && doc.schemaVersion === 5);
   await click(L("Remove music"));
   await saved();
+
+  // ---------- Heavy source: a light preview copy, exports from the original ----------
+  await click('ol[aria-label="Slides"] > li:nth-child(3) button');
+  await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/heavy.mp4`);
+  await page.waitForSelector(L("Add video heavy.mp4"), { timeout: 60000 });
+  const sawStatus = await page.waitForSelector('[data-testid="proxy-status"]', { timeout: 15000 }).then(() => true, () => false);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="proxy-status"]'), { timeout: 120000 });
+  await saved();
+  doc = await readDoc();
+  const heavy = doc.assets.find((a) => a.name === "heavy.mp4");
+  const heavyStored = await page.evaluate(
+    (id) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open("creative-carousel-studio");
+        req.onsuccess = () => {
+          const get = req.result.transaction("assets").objectStore("assets").get(id);
+          get.onsuccess = () => resolve({ original: get.result.blob.size, proxy: get.result.proxy?.size ?? 0, proxyType: get.result.proxy?.type });
+        };
+      }),
+    heavy.id,
+  );
+  ok("a heavy video announces that a lighter copy is being prepared", sawStatus);
+  ok("the original is kept and a much smaller proxy is stored next to it", heavy.width === 3840 && heavyStored.original === fs.statSync(`${FIXTURES}/heavy.mp4`).size && heavyStored.proxy > 10000 && heavyStored.proxy < heavyStored.original / 3, JSON.stringify(heavyStored));
+  const smallStored = await idbGet("assets", doc.assets.find((a) => a.name === "clip.mp4").id);
+  ok("a small video gets no proxy", !!smallStored && !(await page.evaluate(
+    (id) => new Promise((resolve) => { const req = indexedDB.open("creative-carousel-studio"); req.onsuccess = () => { const get = req.result.transaction("assets").objectStore("assets").get(id); get.onsuccess = () => resolve(!!get.result.proxy); }; }),
+    doc.assets.find((a) => a.name === "clip.mp4").id,
+  )));
+  await click(L("Play slide"));
+  await waitState("playing", 3000);
+  await sleep(600);
+  const liveSize = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => `${v.videoWidth}x${v.videoHeight}`).join());
+  ok("the editor plays the 720p proxy", liveSize === "1280x720", liveSize);
+  await click(L("Stop and show poster frames"));
+  await waitState("stopped", 3000);
+  ok("the document still points at the original only", doc.slides[2].elements[0].assetId === heavy.id && doc.assets.filter((a) => a.name === "heavy.mp4").length === 1);
+  await clickText("Export");
+  await clickText("Current");
+  await runExport("Export 1 slide");
+  const heavyOut = await download("mixed-export-03.mp4");
+  await clickText("Done");
+  mp4 = await inspectVideo(heavyOut, "video/mp4", [1]);
+  ok("and the export of that slide is full size, 8 s, with sound", mp4.width === 1080 && mp4.height === 1350 && Math.abs(mp4.duration - 8) < 0.15 && hasBox(heavyOut, "mp4a"), `${mp4.width}x${mp4.height} ${mp4.duration}`);
+  await click('ol[aria-label="Slides"] > li:nth-child(2) button');
   const mixedUrl = page.url();
 
   // Without WebCodecs the slide is recorded in real time instead, and the dialog says so.
