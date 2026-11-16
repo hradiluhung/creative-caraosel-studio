@@ -219,6 +219,16 @@ Decisions:
   adjustments and output size). The editor caps them at 1600 px, thumbnails render tiny ones, the
   exporter asks for full resolution. Blur and sharpen radii are relative to the bitmap size, so the
   look is the same at every resolution.
+- **Sliders stay responsive through progressive rendering** (`ImageStore.getProcessed` with
+  `progressive: true`, editor only). While a slider moves, only a 360 px preview is recomputed on
+  the main thread; 140 ms after it stops, the full-resolution pass runs in a Web Worker
+  (`src/render/adjust.worker.ts`) and replaces the preview. The cropped, resampled photo is cached
+  per frame, so a slider step never resamples the original again. If the worker cannot start
+  (for example offline before its script was cached), the same pass runs on the main thread.
+  Measured with `tests/perf-slider.mjs` (12 MP photo, CPU throttled 4x, per slider step):
+  brightness 262 ms -> about 65 ms, blur 1361 ms -> about 120 ms, vignette 1631 ms -> about 135 ms.
+  The editor canvas also dropped its blurred backdrop shadow, which made every redraw about 3x
+  cheaper in the same test.
 - **Images are drawn as a pattern fill of their mask outline**, which is why border and shadow follow
   any mask shape with no extra code per shape.
 - **Custom fonts:** files are checked by signature, loaded through `FontFace` (a corrupted file fails
@@ -245,8 +255,8 @@ project as a template.
 
 - **Phase 2 was verified in desktop Chrome only.** Phase 1 has been used on an iPhone; the Phase 2
   panels, the iOS Files picker for fonts and filter speed on a phone still need a device pass.
-- Image adjustments run on the main thread. One photo is fine; dragging a slider on a very large
-  frame can stutter on phones. Moving `applyAdjustments` into a Web Worker is the planned fix.
+- Adjustment sliders use a quick low-resolution preview while moving; the photo sharpens a moment
+  after the slider stops. Exports are always full quality.
 - Of the 25 template categories in the specification, 10 have a built-in template so far.
 - Not built yet from the Phase 2 wish list: curved text, auto-fit text, paragraph spacing, vertical
   alignment, duotone and color-overlay filters, background removal, free-form drawing, pattern and

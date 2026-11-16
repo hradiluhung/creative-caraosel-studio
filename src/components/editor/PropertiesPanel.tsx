@@ -20,7 +20,7 @@ import {
   Unlock,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getSurface } from "@/document/geometry";
 import {
@@ -208,6 +208,48 @@ const ADJUSTMENT_SLIDERS: Array<{ key: keyof Adjustments; label: string; min: nu
 ];
 const NO_PRESETS: FilterPreset[] = [];
 
+/**
+ * The thumb follows the finger immediately (local state); the document is updated at most
+ * once per animation frame, so a fast drag never queues up more work than the screen can show.
+ */
+function AdjustSlider({ label, min, value, onChange }: { label: string; min: number; value: number; onChange: (v: number) => void }) {
+  const [live, setLive] = useState<number | null>(null);
+  const pending = useRef<{ value: number; frame: number } | null>(null);
+  const commit = useRef(onChange);
+  useEffect(() => {
+    commit.current = onChange;
+  });
+  useEffect(() => () => {
+    if (pending.current) cancelAnimationFrame(pending.current.frame);
+  }, []);
+  return (
+    <div>
+      <span className="text-[11px] text-muted">{label}</span>
+      <Slider
+        label={label}
+        min={min}
+        max={100}
+        step={1}
+        value={live ?? value}
+        onChange={(v) => {
+          setLive(v);
+          if (pending.current) {
+            pending.current.value = v;
+            return;
+          }
+          const frame = requestAnimationFrame(() => {
+            const next = pending.current?.value;
+            pending.current = null;
+            if (next !== undefined) commit.current(next);
+            setLive(null);
+          });
+          pending.current = { value: v, frame };
+        }}
+      />
+    </div>
+  );
+}
+
 function ImageProps({ el }: { el: ImageElement }) {
   const set = useUpdate(el);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -299,17 +341,13 @@ function ImageProps({ el }: { el: ImageElement }) {
         {showAdjust && (
           <div className="space-y-1">
             {ADJUSTMENT_SLIDERS.map(({ key, label, min }) => (
-              <div key={key}>
-                <span className="text-[11px] text-muted">{label}</span>
-                <Slider
-                  label={label}
-                  min={min}
-                  max={100}
-                  step={1}
-                  value={el.adjustments[key]}
-                  onChange={(v) => set({ adjustments: { ...el.adjustments, [key]: v }, filter: null }, `adj:${key}`)}
-                />
-              </div>
+              <AdjustSlider
+                key={key}
+                label={label}
+                min={min}
+                value={el.adjustments[key]}
+                onChange={(v) => set({ adjustments: { ...el.adjustments, [key]: v }, filter: null }, `adj:${key}`)}
+              />
             ))}
             <div className="flex gap-2 pt-1">
               <TextInput aria-label="Preset name" placeholder="Preset name" maxLength={24} value={presetName} onChange={(e) => setPresetName(e.target.value)} />

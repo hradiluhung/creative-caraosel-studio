@@ -136,6 +136,38 @@ try {
   await clickText("Adjust manually");
   await page.screenshot({ path: `${SHOTS}/p2-image-panel.png` });
 
+  // ---------- Adjustment slider: quick preview now, sharp result from a Web Worker ----------
+  await page.select(L("Mask shape"), "rect");
+  await (await page.waitForSelector(`input[type="range"]${L("Saturation")}`)).focus();
+  for (let i = 0; i < 100; i++) await page.keyboard.press("ArrowLeft");
+  await saved();
+  ok("slider value is stored", (await active()).elements[0].adjustments.saturation === -100);
+  await sleep(1200);
+  ok("full-resolution pass ran in a dedicated worker", page.workers().length >= 1);
+  // The editor canvas must end up showing the worker result (gray), not the original colors.
+  const shot = await page.screenshot({ encoding: "base64" });
+  const host = await (await page.$('[data-testid="canvas-host"]')).boundingBox();
+  const fitScale = Math.min((host.width - 112) / 1080, (host.height - 112) / 1350);
+  const sx = host.x + (host.width - 1080 * fitScale) / 2 + 340 * fitScale;
+  const sy = host.y + (host.height - 1350 * fitScale) / 2 + 675 * fitScale;
+  const live = await page.evaluate(
+    async (b64, x, y) => {
+      const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+      const c = new OffscreenCanvas(bmp.width, bmp.height);
+      c.getContext("2d").drawImage(bmp, 0, 0);
+      return Array.from(c.getContext("2d").getImageData(Math.round(x), Math.round(y), 1, 1).data);
+    },
+    shot,
+    sx,
+    sy,
+  );
+  ok("editor preview shows the desaturated photo", Math.abs(live[0] - live[1]) <= 3 && Math.abs(live[1] - live[2]) <= 3, `${live}`);
+  await exportPng("phase-two-01.png");
+  const exported = await pixel(340, 675);
+  ok("export matches the adjusted preview", Math.abs(exported[0] - live[0]) <= 4 && Math.abs(exported[0] - exported[2]) <= 2, `${exported} vs ${live}`);
+  await clickText("Original");
+  await saved();
+
   // ---------- Stickers, overlays, text effects ----------
   await click(L("Add sticker Sparkle"));
   await click(L("Add overlay Film grain"));

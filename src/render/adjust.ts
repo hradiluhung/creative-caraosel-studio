@@ -127,8 +127,10 @@ export function applyAdjustments(data: Uint8ClampedArray, width: number, height:
     const cy = (height - 1) / 2;
     const maxD = Math.hypot(cx, cy) || 1;
     for (let y = 0; y < height; y++) {
+      const dy2 = (y - cy) * (y - cy);
       for (let x = 0; x < width; x++) {
-        const d = Math.hypot(x - cx, y - cy) / maxD;
+        // Math.sqrt is several times faster than Math.hypot in this per-pixel loop.
+        const d = Math.sqrt((x - cx) * (x - cx) + dy2) / maxD;
         const t = Math.max(0, (d - 0.45) / 0.55);
         const f = 1 - strength * t * t;
         const i = (y * width + x) * 4;

@@ -36,6 +36,8 @@ export interface BuildOptions {
   maxImageSide: number;
   /** Empty photo frames are drawn in the editor and in thumbnails, never in exports. */
   showPlaceholders: boolean;
+  /** Editor only: quick previews first, sharp adjusted images from a worker (see ImageStore). */
+  progressive?: boolean;
 }
 
 // --- Text -------------------------------------------------------------------
@@ -149,7 +151,7 @@ function imageNodes(el: ImageElement, res: RenderResources, opts: BuildOptions):
       },
       ...config,
     });
-  const bitmap = el.assetId ? res.getProcessed(el, { quality: opts.quality, maxSide: opts.maxImageSide }) : undefined;
+  const bitmap = el.assetId ? res.getProcessed(el, { quality: opts.quality, maxSide: opts.maxImageSide, progressive: opts.progressive }) : undefined;
   if (bitmap) {
     // The processed bitmap is used as a pattern fill, so border and shadow follow any mask shape.
     return [

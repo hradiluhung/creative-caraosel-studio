@@ -542,6 +542,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     observer.observe(host);
 
     const unsubscribeImages = images.subscribe(() => setResourceTick((t) => t + 1));
+    const unsubscribeProcessed = images.subscribeProcessed(() => setResourceTick((t) => t + 1));
 
     canvasApi.fit = fit;
     canvasApi.focusSlide = focusSlide;
@@ -552,6 +553,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       cancelLongPress();
       observer.disconnect();
       unsubscribeImages();
+      unsubscribeProcessed();
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
@@ -593,13 +595,14 @@ export function CanvasStage({ images }: { images: ImageStore }) {
         width: surface.width,
         height: surface.height,
         fillPatternImage: checkerPattern() as unknown as HTMLImageElement,
-        shadowColor: "#000000",
-        shadowOpacity: 0.14,
-        shadowBlur: 28,
-        shadowOffsetY: 6,
+        // A hairline instead of a blurred drop shadow: canvas shadows are re-rasterized on every
+        // redraw and are one of the slowest things a 2D canvas can do, especially on iOS.
+        stroke: "rgba(0,0,0,0.18)",
+        strokeWidth: 1,
+        strokeScaleEnabled: false,
       }),
     );
-    const content = buildSurfaceContent(surface, images, { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true });
+    const content = buildSurfaceContent(surface, images, { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true, progressive: true });
     r.holder.add(content);
     if (editingTextId) content.findOne(`#${editingTextId}`)?.visible(false);
 
