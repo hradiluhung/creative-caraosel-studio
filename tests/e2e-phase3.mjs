@@ -311,6 +311,23 @@ try {
   shown = await until(async () => ((c) => ({ done: isBlue(c), c }))(await screenColor(300, 675)), 600);
   ok("live frames are flipped the same way as the poster", shown.done && isRed(await screenColor(780, 675)), String(shown.c));
   await waitState("stopped");
+
+  // Any video imported earlier can be put into this frame again, without importing it twice.
+  doc = await readDoc();
+  const earlier = doc.assets.find((a) => a.name === "clip.mp4");
+  const options = await page.$$eval(`${L("Video file")} option`, (ns) => ns.map((n) => n.textContent));
+  ok("the video frame lists every video imported into the project", options.length === doc.assets.filter((a) => a.mime.startsWith("video/")).length && options.some((o) => o.startsWith("clip.mp4")) && options.some((o) => o.startsWith("sides.mp4")), options.join(" | "));
+  await page.select(L("Video file"), earlier.id);
+  await saved();
+  doc = await readDoc();
+  const swapped = doc.slides[1].elements.find((e) => e.type === "video");
+  ok("choosing one swaps the file but keeps the frame", swapped.assetId === earlier.id && swapped.width === 600 && swapped.x === 240 && swapped.flipX && swapped.trimStart === 0 && Math.abs(swapped.trimEnd - 2) < 0.1 && doc.assets.filter((a) => a.name === "clip.mp4").length === 1, JSON.stringify([swapped.assetId === earlier.id, swapped.trimEnd, swapped.width]));
+  shown = await until(async () => ((c) => ({ done: isRed(c), c }))(await screenColor(300, 675)));
+  ok("and the canvas shows the chosen video (all red at its start)", shown.done && isRed(await screenColor(780, 675)), String(shown.c));
+  await click(L("Play slide"));
+  shown = await until(async () => ((c) => ({ done: isBlue(c), c }))(await screenColor(300, 675)), 5000);
+  ok("which then plays", shown.done, String(shown.c));
+  await waitState("stopped");
   await page.screenshot({ path: `${SHOTS}/p3-02-end.png` });
 
   // ---------- C2: timeline ----------
@@ -797,7 +814,13 @@ try {
     const asked = new WeakSet();
     const proto = HTMLMediaElement.prototype;
     const readyState = Object.getOwnPropertyDescriptor(proto, "readyState");
-    Object.defineProperty(proto, "readyState", { get() { return asked.has(this) ? readyState.get.call(this) : Math.min(readyState.get.call(this), 1); } });
+    // ... and while it plays, a long video reports readyState 2 ("not enough data"), although it plays fine.
+    Object.defineProperty(proto, "readyState", {
+      get() {
+        const real = readyState.get.call(this);
+        return !asked.has(this) ? Math.min(real, 1) : !this.paused ? Math.min(real, 2) : real;
+      },
+    });
     const currentTime = Object.getOwnPropertyDescriptor(proto, "currentTime");
     Object.defineProperty(proto, "currentTime", { get: currentTime.get, set(v) { asked.add(this); currentTime.set.call(this, v); } });
     const play = proto.play;
@@ -845,10 +868,21 @@ try {
   const hostBox = await (await ios.$('[data-testid="canvas-host"]')).boundingBox();
   const lazyCenter = await pixel(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2);
   ok("and its poster frame is drawn on the canvas", isRed(lazyCenter), String(lazyCenter));
+  await ios.evaluate(() => {
+    globalThis.__rewinds = 0;
+    const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { get: d.get, set(v) { if (v < d.get.call(this) - 0.2) globalThis.__rewinds++; d.set.call(this, v); } });
+  });
+  const playStarted = Date.now();
   await (await ios.waitForSelector(L("Play slide"), { visible: true })).click();
   await sleep(1500);
   await decodePng(await ios.screenshot());
   ok("and it plays", isBlue(await pixel(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2)));
+  await ios.waitForSelector('[data-testid="playback-bar"][data-state="stopped"]', { timeout: 30000 }).catch(() => {});
+  const playMs = Date.now() - playStarted;
+  const rewinds = await ios.evaluate(() => globalThis.__rewinds);
+  ok("at normal speed although the browser reports too little buffered data (2 s clip)", playMs < 3500, `${playMs} ms`);
+  ok("and the video is never rewound while it plays (no repeated sound)", rewinds === 0, String(rewinds));
   await ios.close();
 
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));

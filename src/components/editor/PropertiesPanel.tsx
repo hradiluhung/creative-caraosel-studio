@@ -37,8 +37,9 @@ import {
   type StickerElement,
   type TextElement,
   type VideoElement,
+  isVideoAsset,
 } from "@/document/schema";
-import { clampTrim, clipDuration, formatSeconds, videoTimeAt } from "@/document/timing";
+import { clampTrim, clipDuration, formatSeconds, MAX_VIDEO_SLIDE_SECONDS, videoTimeAt } from "@/document/timing";
 import { VIDEO_LABEL, type VideoMime } from "@/persistence/videoSniff";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
 import { FILTER_PRESETS, type FilterPreset } from "@/render/adjust";
@@ -287,6 +288,8 @@ const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 function VideoProps({ el }: { el: VideoElement }) {
   const set = useUpdate(el);
   const asset = useEditorStore((s) => s.project?.assets.find((a) => a.id === el.assetId));
+  // Every video that was imported into this project can be put into this frame without importing it again.
+  const videoAssets = useEditorStore(useShallow((s) => s.project?.assets.filter(isVideoAsset) ?? []));
   const playback = useEditorStore((s) => s.playback);
   const playhead = useEditorStore((s) => s.playhead);
   const source = asset?.duration ?? el.trimEnd;
@@ -300,6 +303,19 @@ function VideoProps({ el }: { el: VideoElement }) {
             ? `${VIDEO_LABEL[asset.mime as VideoMime] ?? asset.mime} · ${asset.width} × ${asset.height} · ${formatSeconds(source)} · plays ${formatSeconds(clipDuration(el))}`
             : "The video file of this layer is missing on this device."}
         </p>
+        {videoAssets.length > 1 && (
+          <Select
+            label="Video file"
+            value={el.assetId}
+            onChange={(assetId) => {
+              const next = videoAssets.find((a) => a.id === assetId);
+              if (!next || next.id === el.assetId) return;
+              // Same frame, same place on the timeline, another file: start again from its beginning.
+              set({ assetId: next.id, name: next.name.replace(/\.[^.]+$/, "") || "Video", posterTime: 0, ...clampTrim(0, Math.min(next.duration ?? 1, MAX_VIDEO_SLIDE_SECONDS - el.start), next.duration ?? 1) });
+            }}
+            options={videoAssets.map((a) => ({ value: a.id, label: `${a.name} (${formatSeconds(a.duration ?? 0)})` }))}
+          />
+        )}
         <Row>
           <NumberField label="Trim start" prefix="[" min={0} max={source} step={0.1} decimals={2} value={el.trimStart} onChange={(v) => trim(v, Math.max(el.trimEnd, v))} />
           <NumberField label="Trim end" prefix="]" min={0} max={source} step={0.1} decimals={2} value={el.trimEnd} onChange={(v) => trim(Math.min(el.trimStart, v), v)} />

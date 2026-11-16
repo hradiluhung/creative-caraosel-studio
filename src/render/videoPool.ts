@@ -61,7 +61,7 @@ const POSTER_MAX_SIDE = 4096;
 /** How far a playing video may run away from the clock before it is pulled back, in source seconds. */
 const DRIFT_TOLERANCE = 0.3;
 /** Up to this difference (source seconds) the clock is moved to the leading video; beyond it the video is. */
-const FOLLOW_LIMIT = 1.5;
+const FOLLOW_LIMIT = 5;
 
 const posterKey = (assetId: string, time: number) => `${assetId}@${Math.round(time * 1000)}`;
 
@@ -259,7 +259,12 @@ export class VideoPool {
         result.waiting = true;
         continue;
       }
-      if (video.seeking || video.readyState < 3) {
+      // Deliberately no readyState check here. iOS Safari reports "not enough data" (readyState 2)
+      // for a long video while it is playing perfectly well, because it only buffers a little ahead.
+      // Treating that as "still buffering" held the clock while the video ran on to its end, and the
+      // video was then rewound to the clock and played again: slow, choppy, sound repeating.
+      // A video that really stalls simply stops advancing, and the clock, which follows it, stops too.
+      if (video.seeking) {
         result.waiting = true;
         continue;
       }
@@ -276,6 +281,9 @@ export class VideoPool {
       entry.cleanup();
       this.live.delete(id);
     }
+    // While one clip is leading, the clock goes with it: another clip that is still starting up
+    // (the second half of a split) must not hold the clock back behind a video that is running.
+    if (hasLeader) result.waiting = false;
     return result;
   }
 

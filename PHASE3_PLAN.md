@@ -8,7 +8,7 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 
 - Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
 - Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (100 tests),
-  `npm run test:e2e` (36 + 28 + 115 browser checks; headers of `tests/e2e*.mjs` explain the setup).
+  `npm run test:e2e` (36 + 28 + 121 browser checks; headers of `tests/e2e*.mjs` explain the setup).
 - Document schema was version 2. C1 bumped it to 3, C2 to 4 and C4 to 5, each with a migration in
   `src/document/migrations.ts` (never edit old migrations).
 
@@ -315,6 +315,29 @@ Results reported after C4, and the fixes. **None of these fixes has been confirm
 Checks after these changes: 100 unit tests; e2e 36/36, 28/28, 115/115 (new: clip sound audible in the
 exported AAC, trim handle has room and stretches back, proxy stored and played, export from the
 original).
+
+## Device test round 2 (2026-11-16, iPhone)
+
+Reported: sound in exports, the 60 s limit and trimming now work. Still broken: the 56 s clip played
+choppy and far too slowly, with sound glitching or repeating, also after its lighter copy was ready.
+
+- **Root cause (reproduced in Chrome by simulating one browser behaviour, not observed on the device
+  itself):** `VideoPool.sync` treated `video.readyState < 3` as "still buffering" and held the playback
+  clock. A long video on iOS reports readyState 2 while it plays normally (it only buffers a little
+  ahead; a short clip is buffered completely, which is why short clips were fine). So the clock stood
+  still while the video ran on; at the end of the file the video was rewound to the stale clock and
+  played again. With Chrome made to report readyState 2 during playback, a 6 s clip took over 60 s to
+  "play" (`LOW_READYSTATE=1 node tests/perf-playback.mjs`), with all three symptoms. It was a bug in the
+  lag fix made after C1, not a decoding-speed problem, so the preview proxy could not help with it.
+- **Fix:** no readyState check while playing. The clock always follows the leading video (a stalled
+  video simply stops advancing, and the clock with it), and a clip that is still starting no longer
+  holds the clock while another one leads. Same simulation after the fix: 6.6 s. The e2e test now
+  simulates this too and checks normal speed and zero rewinds.
+- **Unverified:** that iOS really reports readyState 2 here. If the clip still stutters, that
+  assumption was wrong and the next step is to log `readyState`, `currentTime` and the clock on the
+  device instead of guessing again.
+- New: a video frame can be switched to any other video already imported into the project
+  ("Video file" in the properties of a video layer), without importing it again.
 
 ## Phase 3 status
 

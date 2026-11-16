@@ -29,6 +29,14 @@ await page.evaluateOnNewDocument(() => {
     },
   });
 });
+if (process.env.LOW_READYSTATE) {
+  // iOS Safari often reports readyState 2 (HAVE_CURRENT_DATA) for a long video while it is playing
+  // perfectly well: it only buffers a little ahead. Make Chrome report the same.
+  await page.evaluateOnNewDocument(() => {
+    const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "readyState");
+    Object.defineProperty(HTMLMediaElement.prototype, "readyState", { get() { const real = d.get.call(this); return !this.paused && real > 2 ? 2 : real; } });
+  });
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tapText = async (t) => (await page.waitForSelector(`button ::-p-text(${t})`, { visible: true })).tap();
 await page.goto(BASE, { waitUntil: "networkidle0" });
