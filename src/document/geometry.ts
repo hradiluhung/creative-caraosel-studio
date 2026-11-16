@@ -7,19 +7,50 @@ import type { Background, DesignElement, Project } from "./schema";
 
 export const PANORAMA_ID = "panorama";
 
+export type Orientation = "portrait" | "square" | "landscape";
+
 export interface CanvasPreset {
   id: string;
-  label: string;
+  /** Aspect ratio as width:height, for example "4:5". */
+  ratio: string;
+  orientation: Orientation;
+  /** Where this format is typically used. */
+  usage: string;
   width: number;
   height: number;
 }
 
+/**
+ * All presets are 1080 px on their short Instagram-facing side, except 16:9
+ * which uses 1920 x 1080 so the ratio stays exact in whole pixels.
+ */
 export const CANVAS_PRESETS: CanvasPreset[] = [
-  { id: "portrait", label: "Instagram Portrait", width: 1080, height: 1350 },
-  { id: "square", label: "Instagram Square", width: 1080, height: 1080 },
-  { id: "landscape", label: "Instagram Landscape", width: 1080, height: 566 },
-  { id: "story", label: "Instagram Story", width: 1080, height: 1920 },
+  { id: "4:5", ratio: "4:5", orientation: "portrait", usage: "Feed portrait", width: 1080, height: 1350 },
+  { id: "3:4", ratio: "3:4", orientation: "portrait", usage: "Feed tall", width: 1080, height: 1440 },
+  { id: "2:3", ratio: "2:3", orientation: "portrait", usage: "Classic photo", width: 1080, height: 1620 },
+  { id: "9:16", ratio: "9:16", orientation: "portrait", usage: "Story / Reels", width: 1080, height: 1920 },
+  { id: "1:1", ratio: "1:1", orientation: "square", usage: "Feed square", width: 1080, height: 1080 },
+  { id: "5:4", ratio: "5:4", orientation: "landscape", usage: "Feed landscape", width: 1080, height: 864 },
+  { id: "4:3", ratio: "4:3", orientation: "landscape", usage: "Classic landscape", width: 1080, height: 810 },
+  { id: "3:2", ratio: "3:2", orientation: "landscape", usage: "Classic photo", width: 1080, height: 720 },
+  { id: "16:9", ratio: "16:9", orientation: "landscape", usage: "Widescreen", width: 1920, height: 1080 },
+  { id: "1.91:1", ratio: "1.91:1", orientation: "landscape", usage: "Feed widest", width: 1080, height: 566 },
 ];
+
+export const DEFAULT_PRESET_ID = "4:5";
+
+/** Simplified width:height ratio of any size, for example 1080 x 1350 -> "4:5". */
+export function aspectRatioLabel(width: number, height: number): string {
+  const known = CANVAS_PRESETS.find((p) => p.width * height === p.height * width);
+  if (known) return known.ratio;
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const w = Math.round(width);
+  const h = Math.round(height);
+  if (w < 1 || h < 1) return "";
+  const d = gcd(w, h);
+  // Awkward sizes would reduce to something unreadable like 540:283, so show a decimal instead.
+  return w / d <= 32 && h / d <= 32 ? `${w / d}:${h / d}` : `${Number((w / h).toFixed(2))}:1`;
+}
 
 /** An editable canvas: one slide (independent) or the whole panorama (seamless). */
 export interface Surface {
@@ -140,4 +171,18 @@ export function slidesTouched(project: Project, el: DesignElement): number[] {
   const out: number[] = [];
   for (let i = first; i <= last; i++) out.push(i);
   return out;
+}
+
+/**
+ * Start and end points of a CSS-style linear gradient inside a box.
+ * 0deg points up, 90deg points right; the line is long enough to reach the corners.
+ */
+export function linearGradientPoints(angleDeg: number, width: number, height: number) {
+  const a = (angleDeg * Math.PI) / 180;
+  const dx = Math.sin(a);
+  const dy = -Math.cos(a);
+  const half = (Math.abs(width * dx) + Math.abs(height * dy)) / 2;
+  const cx = width / 2;
+  const cy = height / 2;
+  return { start: { x: cx - dx * half, y: cy - dy * half }, end: { x: cx + dx * half, y: cy + dy * half } };
 }

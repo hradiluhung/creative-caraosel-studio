@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createImage, createProject, createShape, createText, placementFor } from "./factory";
 import {
+  aspectRatioLabel,
+  CANVAS_PRESETS,
   coverCrop,
   fitToViewport,
   fitWithin,
@@ -45,6 +47,32 @@ describe("factory", () => {
     const pl = placementFor({ width: 6480, height: 1350 }, 1080, 3 * 1080);
     expect(pl.centerX).toBe(3780);
     expect(pl.maxWidth).toBe(1080);
+  });
+});
+
+describe("canvas presets", () => {
+  it("every preset has a unique id and pixel dimensions that match its ratio label", () => {
+    expect(new Set(CANVAS_PRESETS.map((p) => p.id)).size).toBe(CANVAS_PRESETS.length);
+    for (const p of CANVAS_PRESETS) {
+      const [w, h] = p.ratio.split(":").map(Number);
+      // Exact for whole-number ratios; 1.91:1 rounds to the nearest pixel.
+      expect(Math.abs(p.width / p.height - w / h)).toBeLessThan(0.005);
+      if (Number.isInteger(w)) expect(p.width * h).toBe(p.height * w);
+      expect(p.orientation).toBe(p.width === p.height ? "square" : p.width > p.height ? "landscape" : "portrait");
+    }
+  });
+
+  it("offers 4:5 and 3:4 in both portrait and landscape", () => {
+    const ratios = CANVAS_PRESETS.map((p) => p.ratio);
+    for (const r of ["4:5", "5:4", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9", "1:1"]) expect(ratios).toContain(r);
+  });
+
+  it("labels arbitrary sizes with a readable ratio", () => {
+    expect(aspectRatioLabel(1080, 1350)).toBe("4:5");
+    expect(aspectRatioLabel(2160, 2880)).toBe("3:4");
+    expect(aspectRatioLabel(1080, 566)).toBe("1.91:1");
+    expect(aspectRatioLabel(1200, 500)).toBe("12:5");
+    expect(aspectRatioLabel(1081, 1350)).toBe("0.8:1");
   });
 });
 

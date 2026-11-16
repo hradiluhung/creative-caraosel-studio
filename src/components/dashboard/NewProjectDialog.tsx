@@ -2,15 +2,35 @@
 
 import { useState } from "react";
 import { createProject } from "@/document/factory";
-import { CANVAS_PRESETS } from "@/document/geometry";
+import { aspectRatioLabel, CANVAS_PRESETS, DEFAULT_PRESET_ID, type Orientation } from "@/document/geometry";
 import { MAX_SLIDES, type ProjectMode } from "@/document/schema";
 import { saveProject } from "@/persistence/db";
 import { cn } from "@/lib/cn";
 import { Button, Dialog, Label, NumberField, Segmented, TextInput } from "../ui/primitives";
 
+const GROUPS: Array<{ orientation: Orientation; label: string }> = [
+  { orientation: "portrait", label: "Portrait" },
+  { orientation: "landscape", label: "Landscape" },
+  { orientation: "square", label: "Square and custom" },
+];
+
+/** Miniature of the canvas proportions, drawn to scale inside a 28 px box. */
+function RatioIcon({ width, height, dashed = false }: { width: number; height: number; dashed?: boolean }) {
+  const ratio = width / height;
+  const box = 28;
+  return (
+    <span className="flex items-center justify-center" style={{ width: box, height: box }}>
+      <span
+        className={cn("block border border-ink/70", dashed && "border-dashed")}
+        style={{ width: Math.max(6, ratio >= 1 ? box : box * ratio), height: Math.max(6, ratio >= 1 ? box / ratio : box) }}
+      />
+    </span>
+  );
+}
+
 export function NewProjectDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
-  const [presetId, setPresetId] = useState("portrait");
+  const [presetId, setPresetId] = useState(DEFAULT_PRESET_ID);
   const [custom, setCustom] = useState({ width: 1080, height: 1350 });
   const [slideCount, setSlideCount] = useState(5);
   const [mode, setMode] = useState<ProjectMode>("independent");
@@ -56,40 +76,64 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
 
         <div className="space-y-1.5">
           <Label>Canvas</Label>
-          <div className="grid grid-cols-5 gap-2">
-            {[...CANVAS_PRESETS, { id: "custom", label: "Custom", width: custom.width, height: custom.height }].map((p) => {
-              const ratio = p.width / p.height;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  aria-pressed={presetId === p.id}
-                  onClick={() => setPresetId(p.id)}
-                  className={cn(
-                    "flex flex-col items-center gap-1.5 rounded-md border px-1 pt-2.5 pb-1.5",
-                    presetId === p.id ? "border-ink bg-sunken" : "border-line hover:border-line-strong",
+          <div className="space-y-3">
+            {GROUPS.map((group) => (
+              <div key={group.orientation} role="group" aria-label={`${group.label} sizes`}>
+                <p className="mb-1.5 text-[11px] text-muted">{group.label}</p>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {CANVAS_PRESETS.filter((p) => p.orientation === group.orientation).map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      aria-pressed={presetId === p.id}
+                      aria-label={`${p.ratio}, ${p.usage}, ${p.width} by ${p.height} pixels`}
+                      onClick={() => setPresetId(p.id)}
+                      className={cn(
+                        "flex flex-col items-center rounded-md border px-1 pt-2 pb-1.5",
+                        presetId === p.id ? "border-ink bg-sunken" : "border-line hover:border-line-strong",
+                      )}
+                    >
+                      <RatioIcon width={p.width} height={p.height} />
+                      <span className="mt-1.5 text-[13px] leading-none font-semibold tabular-nums">{p.ratio}</span>
+                      <span className="mt-1 text-[10px] leading-tight text-muted tabular-nums">
+                        {p.width} × {p.height}
+                      </span>
+                    </button>
+                  ))}
+                  {group.orientation === "square" && (
+                    <button
+                      type="button"
+                      aria-pressed={presetId === "custom"}
+                      aria-label="Custom size"
+                      onClick={() => setPresetId("custom")}
+                      className={cn(
+                        "flex flex-col items-center rounded-md border px-1 pt-2 pb-1.5",
+                        presetId === "custom" ? "border-ink bg-sunken" : "border-line hover:border-line-strong",
+                      )}
+                    >
+                      <RatioIcon width={custom.width} height={custom.height} dashed />
+                      <span className="mt-1.5 text-[13px] leading-none font-semibold">Custom</span>
+                      <span className="mt-1 text-[10px] leading-tight text-muted">Any size</span>
+                    </button>
                   )}
-                >
-                  <span className="flex h-9 items-center">
-                    <span
-                      className={cn("block border border-ink/70", p.id === "custom" && "border-dashed")}
-                      style={{ width: ratio >= 1 ? 30 : 30 * ratio, height: ratio >= 1 ? 30 / ratio : 30 }}
-                    />
-                  </span>
-                  <span className="text-[10px] leading-tight text-muted">{p.label.replace("Instagram ", "")}</span>
-                </button>
-              );
-            })}
+                </div>
+              </div>
+            ))}
           </div>
           {preset ? (
             <p className="text-xs text-muted">
-              {preset.label}: {preset.width} × {preset.height} px
+              {preset.ratio} · {preset.usage} · {preset.width} × {preset.height} px
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <NumberField label="Width" prefix="W" min={16} max={8192} value={custom.width} onChange={(width) => setCustom({ ...custom, width: Math.round(width) })} />
-              <NumberField label="Height" prefix="H" min={16} max={8192} value={custom.height} onChange={(height) => setCustom({ ...custom, height: Math.round(height) })} />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <NumberField label="Width" prefix="W" min={16} max={8192} value={custom.width} onChange={(width) => setCustom({ ...custom, width: Math.round(width) })} />
+                <NumberField label="Height" prefix="H" min={16} max={8192} value={custom.height} onChange={(height) => setCustom({ ...custom, height: Math.round(height) })} />
+              </div>
+              <p className="text-xs text-muted">
+                Ratio {aspectRatioLabel(custom.width, custom.height)} · {custom.width} × {custom.height} px
+              </p>
+            </>
           )}
         </div>
 

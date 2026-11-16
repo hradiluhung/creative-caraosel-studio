@@ -7,6 +7,7 @@ import { create } from "zustand";
 import { getSurface, getSurfaces, PANORAMA_ID } from "@/document/geometry";
 import * as ops from "@/document/operations";
 import type { DesignElement, Project } from "@/document/schema";
+import type { BrandKit } from "@/persistence/db";
 
 export type SaveStatus = "saved" | "dirty" | "saving" | "error";
 
@@ -32,6 +33,9 @@ export interface EditorState {
   saveError: string | null;
   zoom: number;
   editingTextId: string | null;
+  /** Brand kit attached to the open project (colors, fonts and logos offered in the panels). */
+  brandKit: BrandKit | null;
+  setBrandKit(kit: BrandKit | null): void;
 
   open(project: Project): void;
   close(): void;
@@ -87,6 +91,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveError: null,
   zoom: 1,
   editingTextId: null,
+  brandKit: null,
+  setBrandKit(kit) {
+    set({ brandKit: kit });
+  },
 
   open(project) {
     set({
@@ -104,7 +112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   close() {
-    set({ project: null, past: [], future: [], selection: [], editingTextId: null, lastCommit: null });
+    set({ project: null, past: [], future: [], selection: [], editingTextId: null, lastCommit: null, brandKit: null });
   },
 
   commit(fn, opts) {

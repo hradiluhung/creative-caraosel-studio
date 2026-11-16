@@ -3,7 +3,7 @@
  * schema version, then validate. Add a new entry to MIGRATIONS whenever
  * SCHEMA_VERSION is bumped; never edit an old one.
  */
-import { projectSchema, SCHEMA_VERSION, type Project } from "./schema";
+import { NEUTRAL_ADJUSTMENTS, projectSchema, SCHEMA_VERSION, type Project } from "./schema";
 
 type RawDoc = Record<string, unknown>;
 type Migration = (doc: RawDoc) => RawDoc;
@@ -18,6 +18,35 @@ const MIGRATIONS: Record<number, Migration> = {
     assets: doc.assets ?? [],
     schemaVersion: 1,
   }),
+  // Version 2 (Phase 2): gradients, blend modes, shadows, text effects, image adjustments and
+  // masks, photo placeholders, stickers, overlays, brand kits. Old elements get neutral defaults.
+  1: (doc) => {
+    const upgrade = (el: RawDoc): RawDoc => {
+      const base = { blendMode: "normal", shadow: null, ...el };
+      if (el.type === "image") {
+        return {
+          mask: "rect",
+          adjustments: { ...NEUTRAL_ADJUSTMENTS },
+          filter: null,
+          borderColor: "#ffffff",
+          borderWidth: 0,
+          ...base,
+        };
+      }
+      if (el.type === "text") {
+        return { transform: "none", strokeColor: "#000000", strokeWidth: 0, background: null, ...base };
+      }
+      return base;
+    };
+    const container = <T extends RawDoc>(c: T): T => ({ ...c, elements: ((c.elements as RawDoc[]) ?? []).map(upgrade) });
+    return {
+      ...doc,
+      slides: ((doc.slides as RawDoc[]) ?? []).map(container),
+      panorama: container((doc.panorama as RawDoc) ?? { background: { type: "solid", color: "#ffffff" }, elements: [] }),
+      brandKitId: doc.brandKitId ?? null,
+      schemaVersion: 2,
+    };
+  },
 };
 
 export class DocumentError extends Error {

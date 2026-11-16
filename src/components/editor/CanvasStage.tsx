@@ -11,6 +11,8 @@ import type { ImageStore } from "@/render/resources";
 import { buildSurfaceContent, collectFonts, ELEMENT_NAME, measureTextHeight } from "@/render/scene";
 import { useEditorStore } from "@/store/editorStore";
 import { FloatingMenu, type MenuItem } from "../ui/primitives";
+import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
+import { replaceImage } from "./actions";
 import { canvasApi } from "./canvasApi";
 
 const MIN_SCALE = 0.02;
@@ -66,6 +68,8 @@ export function CanvasStage({ images }: { images: ImageStore }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sizeKeyRef = useRef("");
   const discardDragRef = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const replaceTargetRef = useRef<string | null>(null);
 
   const project = useEditorStore((s) => s.project);
   const activeSurfaceId = useEditorStore((s) => s.activeSurfaceId);
@@ -295,6 +299,11 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       const node = elementNodeOf(e.target);
       const el = node && elementsById().get(node.id());
       if (el?.type === "text" && !el.locked) startTextEdit(el.id);
+      if (el?.type === "image" && !el.locked && !el.assetId) {
+        // Still inside the user gesture, which iOS requires for opening a file picker.
+        replaceTargetRef.current = el.id;
+        fileRef.current?.click();
+      }
     });
 
     stage.on("contextmenu", (e) => {
@@ -590,7 +599,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
         shadowOffsetY: 6,
       }),
     );
-    const content = buildSurfaceContent(surface, images, { interactive: true });
+    const content = buildSurfaceContent(surface, images, { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true });
     r.holder.add(content);
     if (editingTextId) content.findOne(`#${editingTextId}`)?.visible(false);
 
@@ -674,12 +683,26 @@ export function CanvasStage({ images }: { images: ImageStore }) {
             lineHeight: editing.lineHeight,
             letterSpacing: `${editing.letterSpacing * view.scale}px`,
             textAlign: editing.align,
+            textTransform: editing.transform,
             color: editing.fill,
             caretColor: ACCENT,
           }}
           className="canvas-text-editor z-10 m-0 resize-none overflow-hidden border-0 bg-transparent p-0 whitespace-pre-wrap outline-1 outline-accent outline-dashed"
         />
       )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept={IMAGE_ACCEPT_ATTR}
+        hidden
+        data-testid="placeholder-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const target = replaceTargetRef.current ?? store().selection[0];
+          e.target.value = "";
+          if (file && target) void replaceImage(target, file);
+        }}
+      />
       {menu && <FloatingMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   );

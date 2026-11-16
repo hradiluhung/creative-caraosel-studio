@@ -27,25 +27,70 @@ export interface StoredAsset extends AssetRef {
   createdAt: string;
 }
 
+export interface StoredFont {
+  id: string;
+  /** Stable CSS family name used in documents. */
+  family: string;
+  /** Display name, renameable. */
+  label: string;
+  weight: number;
+  italic: boolean;
+  fileName: string;
+  format: string;
+  size: number;
+  blob: Blob;
+  createdAt: string;
+}
+
+export interface StoredTemplate {
+  id: string;
+  name: string;
+  category: string;
+  /** A complete project document: templates are editable objects, never flattened images. */
+  doc: unknown;
+  thumbnail: Blob | null;
+  createdAt: string;
+}
+
+export interface BrandKit {
+  id: string;
+  name: string;
+  colors: string[];
+  headingFont: string;
+  bodyFont: string;
+  logos: AssetRef[];
+  updatedAt: string;
+}
+
 interface Schema extends DBSchema {
   projectMeta: { key: string; value: ProjectMeta; indexes: { updatedAt: string } };
   projectDocs: { key: string; value: unknown };
   assets: { key: string; value: StoredAsset };
+  fonts: { key: string; value: StoredFont };
+  templates: { key: string; value: StoredTemplate };
+  brandKits: { key: string; value: BrandKit };
 }
 
 const DB_NAME = "creative-carousel-studio";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<Schema>> | null = null;
 
 function db() {
   if (!dbPromise) {
     dbPromise = openDB<Schema>(DB_NAME, DB_VERSION, {
-      upgrade(database) {
-        const meta = database.createObjectStore("projectMeta", { keyPath: "id" });
-        meta.createIndex("updatedAt", "updatedAt");
-        database.createObjectStore("projectDocs");
-        database.createObjectStore("assets", { keyPath: "id" });
+      upgrade(database, oldVersion) {
+        if (oldVersion < 1) {
+          const meta = database.createObjectStore("projectMeta", { keyPath: "id" });
+          meta.createIndex("updatedAt", "updatedAt");
+          database.createObjectStore("projectDocs");
+          database.createObjectStore("assets", { keyPath: "id" });
+        }
+        if (oldVersion < 2) {
+          database.createObjectStore("fonts", { keyPath: "id" });
+          database.createObjectStore("templates", { keyPath: "id" });
+          database.createObjectStore("brandKits", { keyPath: "id" });
+        }
       },
     });
     dbPromise.catch(() => {
@@ -118,19 +163,70 @@ export async function duplicateStoredProject(id: string): Promise<Project | null
 /** Deletes the project and every asset no other project still references. */
 export async function deleteProject(id: string): Promise<void> {
   const database = await db();
-  const tx = database.transaction(["projectMeta", "projectDocs", "assets"], "readwrite");
+  const tx = database.transaction(["projectMeta", "projectDocs", "assets", "templates", "brandKits"], "readwrite");
   const docs = tx.objectStore("projectDocs");
   const target = (await docs.get(id)) as Project | undefined;
   await docs.delete(id);
   await tx.objectStore("projectMeta").delete(id);
   if (target?.assets?.length) {
-    const stillUsed = new Set<string>();
-    for (const other of (await docs.getAll()) as Project[]) {
-      for (const a of other.assets ?? []) stillUsed.add(a.id);
-    }
+    const stillUsed = await assetsInUse(
+      (await docs.getAll()) as Project[],
+      await tx.objectStore("templates").getAll(),
+      await tx.objectStore("brandKits").getAll(),
+    );
     for (const a of target.assets) if (!stillUsed.has(a.id)) await tx.objectStore("assets").delete(a.id);
   }
   await tx.done;
+}
+
+/** Asset ids referenced by any project, saved template or brand kit. */
+async function assetsInUse(projects: Project[], templates: StoredTemplate[], kits: BrandKit[]) {
+  const used = new Set<string>();
+  for (const p of projects) for (const a of p.assets ?? []) used.add(a.id);
+  for (const t of templates) for (const a of (t.doc as Project | undefined)?.assets ?? []) used.add(a.id);
+  for (const k of kits) for (const a of k.logos ?? []) used.add(a.id);
+  return used;
+}
+
+// --- Custom fonts ---------------------------------------------------------
+
+export async function listStoredFonts(): Promise<StoredFont[]> {
+  return (await db()).getAll("fonts");
+}
+export async function putStoredFont(font: StoredFont): Promise<void> {
+  await (await db()).put("fonts", font);
+}
+export async function deleteStoredFont(id: string): Promise<void> {
+  await (await db()).delete("fonts", id);
+}
+
+// --- User templates -------------------------------------------------------
+
+export async function listStoredTemplates(): Promise<StoredTemplate[]> {
+  const all = await (await db()).getAll("templates");
+  return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+export async function putStoredTemplate(template: StoredTemplate): Promise<void> {
+  await (await db()).put("templates", template);
+}
+export async function deleteStoredTemplate(id: string): Promise<void> {
+  await (await db()).delete("templates", id);
+}
+
+// --- Brand kits -----------------------------------------------------------
+
+export async function listBrandKits(): Promise<BrandKit[]> {
+  const all = await (await db()).getAll("brandKits");
+  return all.sort((a, b) => a.name.localeCompare(b.name));
+}
+export async function getBrandKit(id: string): Promise<BrandKit | undefined> {
+  return (await db()).get("brandKits", id);
+}
+export async function putBrandKit(kit: BrandKit): Promise<void> {
+  await (await db()).put("brandKits", kit);
+}
+export async function deleteBrandKit(id: string): Promise<void> {
+  await (await db()).delete("brandKits", id);
 }
 
 export async function putAsset(asset: StoredAsset): Promise<void> {

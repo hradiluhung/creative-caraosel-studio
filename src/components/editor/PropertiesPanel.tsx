@@ -13,29 +13,76 @@ import {
   Copy,
   FlipHorizontal2,
   FlipVertical2,
+  ImagePlus,
   Italic,
   Lock,
   Trash2,
   Unlock,
+  X,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getSurface } from "@/document/geometry";
-import type { DesignElement, ImageElement, ShapeElement, TextElement } from "@/document/schema";
-import { ensureFontsLoaded, FONT_CATALOG, getFont, resolveItalic, resolveWeight } from "@/render/fonts";
+import {
+  BLEND_MODES,
+  IMAGE_MASKS,
+  isNeutral,
+  NEUTRAL_ADJUSTMENTS,
+  type Adjustments,
+  type DesignElement,
+  type ImageElement,
+  type OverlayElement,
+  type Shadow,
+  type ShapeElement,
+  type StickerElement,
+  type TextElement,
+} from "@/document/schema";
+import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
+import { FILTER_PRESETS, type FilterPreset } from "@/render/adjust";
+import { ensureFontsLoaded, getFont, resolveItalic, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
 import { selectSelectedElements, useEditorStore } from "@/store/editorStore";
-import { ColorField, IconButton, NumberField, Segmented, Select, Slider } from "../ui/primitives";
-import { alignSelected, type AlignEdge } from "./actions";
+import { PREF, setPref, usePref } from "@/lib/prefs";
+import { Button, IconButton, Label, NumberField, Segmented, Select, Slider, TextInput } from "../ui/primitives";
+import { alignSelected, replaceImage, type AlignEdge } from "./actions";
+import { ColorControl } from "./ColorControl";
+import { FontPicker, useFontCatalog } from "./FontPicker";
 import { BackgroundControls, Section } from "./InsertPanel";
 
-const WEIGHT_NAMES: Record<number, string> = { 400: "Regular", 500: "Medium", 600: "Semibold", 700: "Bold" };
+const WEIGHT_NAMES: Record<number, string> = {
+  100: "Thin",
+  200: "Extra light",
+  300: "Light",
+  400: "Regular",
+  500: "Medium",
+  600: "Semibold",
+  700: "Bold",
+  800: "Extra bold",
+  900: "Black",
+};
+const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, " ");
 
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-2 gap-2">{children}</div>;
 }
 
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-xs">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function useUpdate(el: DesignElement) {
+  const updateElement = useEditorStore((s) => s.updateElement);
+  return (p: Partial<DesignElement> | Record<string, unknown>, coalesce?: string) => updateElement(el.id, p as Partial<DesignElement>, coalesce);
+}
+
 function TextProps({ el }: { el: TextElement }) {
   const updateElement = useEditorStore((s) => s.updateElement);
+  useFontCatalog(); // re-render when custom fonts are added or changed
   /** Typography changes alter the rendered height, so it is re-measured with every patch. */
   const patch = async (p: Partial<TextElement>, coalesce?: string) => {
     const next = { ...el, ...p };
@@ -47,56 +94,89 @@ function TextProps({ el }: { el: TextElement }) {
   const font = getFont(el.fontFamily);
   const weight = resolveWeight(el.fontFamily, el.fontWeight);
   return (
-    <Section title="Typography">
-      <Select
-        label="Font family"
-        value={el.fontFamily}
-        onChange={(fontFamily) => void patch({ fontFamily })}
-        options={FONT_CATALOG.map((f) => ({ value: f.family, label: f.family, group: f.category }))}
-      />
-      <Row>
-        <Select
-          label="Font weight"
-          value={String(weight)}
-          onChange={(w) => void patch({ fontWeight: Number(w) })}
-          options={(font?.weights ?? [weight]).map((w) => ({ value: String(w), label: WEIGHT_NAMES[w] ?? String(w) }))}
-        />
-        <NumberField label="Font size" prefix="Aa" min={4} max={2000} value={el.fontSize} decimals={1} onChange={(fontSize) => void patch({ fontSize })} />
-      </Row>
-      <div className="flex items-center gap-2">
-        <div className="flex-1">
-          <Segmented
-            label="Text alignment"
-            value={el.align}
-            onChange={(align) => void patch({ align })}
-            options={[
-              { value: "left", label: <AlignLeft />, title: "Align left" },
-              { value: "center", label: <AlignCenter />, title: "Align center" },
-              { value: "right", label: <AlignRight />, title: "Align right" },
-            ]}
+    <>
+      <Section title="Typography">
+        <FontPicker value={el.fontFamily} onChange={(fontFamily) => void patch({ fontFamily })} />
+        {!font && <p className="text-[11px] text-danger">This font is not installed on this device, so a fallback is shown.</p>}
+        <Row>
+          <Select
+            label="Font weight"
+            value={String(weight)}
+            onChange={(w) => void patch({ fontWeight: Number(w) })}
+            options={(font?.weights.length ? font.weights : [weight]).map((w) => ({ value: String(w), label: WEIGHT_NAMES[w] ?? String(w) }))}
           />
+          <NumberField label="Font size" prefix="Aa" min={4} max={2000} value={el.fontSize} decimals={1} onChange={(fontSize) => void patch({ fontSize })} />
+        </Row>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <Segmented
+              label="Text alignment"
+              value={el.align}
+              onChange={(align) => void patch({ align })}
+              options={[
+                { value: "left", label: <AlignLeft />, title: "Align left" },
+                { value: "center", label: <AlignCenter />, title: "Align center" },
+                { value: "right", label: <AlignRight />, title: "Align right" },
+              ]}
+            />
+          </div>
+          <IconButton label="Italic" active={el.italic && !!font?.italics} disabled={!font?.italics} onClick={() => void patch({ italic: !el.italic })}>
+            <Italic />
+          </IconButton>
         </div>
-        <IconButton label="Italic" active={el.italic && !!font?.italics} disabled={!font?.italics} onClick={() => void patch({ italic: !el.italic })}>
-          <Italic />
-        </IconButton>
-      </div>
-      <ColorField label="Text color" value={el.fill} onChange={(fill) => void patch({ fill }, "fill")} />
-      <Row>
-        <NumberField label="Line height" prefix="↕" min={0.5} max={4} step={0.05} decimals={2} value={el.lineHeight} onChange={(lineHeight) => void patch({ lineHeight })} />
-        <NumberField label="Letter spacing" prefix="↔" min={-50} max={400} step={0.5} decimals={1} value={el.letterSpacing} onChange={(letterSpacing) => void patch({ letterSpacing })} />
-      </Row>
-    </Section>
+        <Segmented
+          label="Letter case"
+          value={el.transform}
+          onChange={(transform) => void patch({ transform })}
+          options={[
+            { value: "none", label: "Aa", title: "As typed" },
+            { value: "uppercase", label: "AA", title: "Uppercase" },
+            { value: "lowercase", label: "aa", title: "Lowercase" },
+            { value: "capitalize", label: "Ab Cd", title: "Capitalize words" },
+          ]}
+        />
+        <ColorControl label="Text color" value={el.fill} onChange={(fill) => void patch({ fill }, "fill")} />
+        <Row>
+          <NumberField label="Line height" prefix="↕" min={0.5} max={4} step={0.05} decimals={2} value={el.lineHeight} onChange={(lineHeight) => void patch({ lineHeight })} />
+          <NumberField label="Letter spacing" prefix="↔" min={-50} max={400} step={0.5} decimals={1} value={el.letterSpacing} onChange={(letterSpacing) => void patch({ letterSpacing })} />
+        </Row>
+      </Section>
+      <Section title="Text effects">
+        <Toggle label="Outline" checked={el.strokeWidth > 0} onChange={(on) => void patch({ strokeWidth: on ? Math.max(2, Math.round(el.fontSize / 16)) : 0 })} />
+        {el.strokeWidth > 0 && (
+          <>
+            <ColorControl label="Outline color" value={el.strokeColor} onChange={(strokeColor) => void patch({ strokeColor }, "stroke")} />
+            <div className="w-1/2 pr-1">
+              <NumberField label="Outline width" prefix="▭" min={0} max={200} decimals={1} value={el.strokeWidth} onChange={(strokeWidth) => void patch({ strokeWidth })} />
+            </div>
+          </>
+        )}
+        <Toggle
+          label="Background box"
+          checked={!!el.background}
+          onChange={(on) => void patch({ background: on ? { color: "#f5e663", padding: Math.round(el.fontSize / 4), radius: 0 } : null })}
+        />
+        {el.background && (
+          <>
+            <ColorControl label="Box color" value={el.background.color} onChange={(color) => void patch({ background: { ...el.background!, color } }, "textbg")} />
+            <Row>
+              <NumberField label="Box padding" prefix="⇔" min={0} max={400} value={el.background.padding} onChange={(padding) => void patch({ background: { ...el.background!, padding } })} />
+              <NumberField label="Box corner radius" prefix="◜" min={0} max={400} value={el.background.radius} onChange={(radius) => void patch({ background: { ...el.background!, radius } })} />
+            </Row>
+          </>
+        )}
+      </Section>
+    </>
   );
 }
 
 function ShapeProps({ el }: { el: ShapeElement }) {
-  const updateElement = useEditorStore((s) => s.updateElement);
-  const set = (p: Partial<ShapeElement>, coalesce?: string) => updateElement(el.id, p as Partial<DesignElement>, coalesce);
+  const set = useUpdate(el);
   const isLine = el.shape === "line" || el.shape === "arrow";
   return (
     <Section title={isLine ? "Line" : "Shape"}>
-      {!isLine && <ColorField label="Fill color" value={el.fill} onChange={(fill) => set({ fill }, "fill")} />}
-      <ColorField label="Stroke color" value={el.stroke} onChange={(stroke) => set({ stroke }, "stroke")} />
+      {!isLine && <ColorControl label="Fill color" value={el.fill} onChange={(fill) => set({ fill }, "fill")} />}
+      <ColorControl label="Stroke color" value={el.stroke} onChange={(stroke) => set({ stroke }, "stroke")} />
       <Row>
         <NumberField label="Stroke width" prefix="▭" min={isLine ? 1 : 0} max={200} value={el.strokeWidth} onChange={(strokeWidth) => set({ strokeWidth })} />
         {el.shape === "rect" && (
@@ -110,22 +190,197 @@ function ShapeProps({ el }: { el: ShapeElement }) {
   );
 }
 
+const ADJUSTMENT_SLIDERS: Array<{ key: keyof Adjustments; label: string; min: number }> = [
+  { key: "brightness", label: "Brightness", min: -100 },
+  { key: "exposure", label: "Exposure", min: -100 },
+  { key: "contrast", label: "Contrast", min: -100 },
+  { key: "saturation", label: "Saturation", min: -100 },
+  { key: "temperature", label: "Temperature", min: -100 },
+  { key: "tint", label: "Tint", min: -100 },
+  { key: "highlights", label: "Highlights", min: -100 },
+  { key: "shadows", label: "Shadows", min: -100 },
+  { key: "fade", label: "Fade", min: 0 },
+  { key: "grayscale", label: "Grayscale", min: 0 },
+  { key: "sharpness", label: "Sharpness", min: 0 },
+  { key: "blur", label: "Blur", min: 0 },
+  { key: "vignette", label: "Vignette", min: 0 },
+  { key: "grain", label: "Grain", min: 0 },
+];
+const NO_PRESETS: FilterPreset[] = [];
+
 function ImageProps({ el }: { el: ImageElement }) {
-  const updateElement = useEditorStore((s) => s.updateElement);
+  const set = useUpdate(el);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [presetName, setPresetName] = useState("");
+  const [showAdjust, setShowAdjust] = useState(false);
+  const saved = usePref<FilterPreset[]>(PREF.imagePresets, NO_PRESETS);
+  const applyPreset = (preset: FilterPreset | null) =>
+    set({ adjustments: { ...NEUTRAL_ADJUSTMENTS, ...(preset?.adjustments ?? {}) }, filter: preset?.name ?? null });
+
   return (
-    <Section title="Image">
-      <div className="flex items-center gap-2">
-        <div className="flex-1">
-          <NumberField label="Corner radius" prefix="◜" min={0} max={4000} value={el.cornerRadius} onChange={(cornerRadius) => updateElement(el.id, { cornerRadius } as Partial<DesignElement>)} />
+    <>
+      <Section title="Image">
+        <input
+          ref={fileRef}
+          type="file"
+          accept={IMAGE_ACCEPT_ATTR}
+          hidden
+          data-testid="replace-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void replaceImage(el.id, file).then(setError);
+          }}
+        />
+        <Button className="w-full" onClick={() => fileRef.current?.click()}>
+          <ImagePlus className="h-4 w-4" /> {el.assetId ? "Replace photo" : "Choose photo"}
+        </Button>
+        {error && (
+          <p role="alert" className="text-xs text-danger">
+            {error}
+          </p>
+        )}
+        <Row>
+          <Select label="Mask shape" value={el.mask} onChange={(mask) => set({ mask })} options={IMAGE_MASKS.map((m) => ({ value: m, label: m === "rect" ? "Rectangle" : title(m) }))} />
+          {el.mask === "rect" ? (
+            <NumberField label="Corner radius" prefix="◜" min={0} max={4000} value={el.cornerRadius} onChange={(cornerRadius) => set({ cornerRadius })} />
+          ) : (
+            <span />
+          )}
+        </Row>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <NumberField label="Border width" prefix="▭" min={0} max={400} value={el.borderWidth} onChange={(borderWidth) => set({ borderWidth })} />
+          </div>
+          <IconButton label="Flip horizontal" active={el.flipX} onClick={() => set({ flipX: !el.flipX })}>
+            <FlipHorizontal2 />
+          </IconButton>
+          <IconButton label="Flip vertical" active={el.flipY} onClick={() => set({ flipY: !el.flipY })}>
+            <FlipVertical2 />
+          </IconButton>
         </div>
-        <IconButton label="Flip horizontal" active={el.flipX} onClick={() => updateElement(el.id, { flipX: !el.flipX } as Partial<DesignElement>)}>
-          <FlipHorizontal2 />
-        </IconButton>
-        <IconButton label="Flip vertical" active={el.flipY} onClick={() => updateElement(el.id, { flipY: !el.flipY } as Partial<DesignElement>)}>
-          <FlipVertical2 />
-        </IconButton>
+        {el.borderWidth > 0 && <ColorControl label="Border color" value={el.borderColor} onChange={(borderColor) => set({ borderColor }, "border")} />}
+        <p className="text-[11px] text-muted">The photo always fills its frame. Resize the frame from a side handle to crop.</p>
+      </Section>
+
+      <Section title="Filters">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Filter presets">
+          {[null, ...FILTER_PRESETS, ...saved].map((preset) => {
+            const active = preset ? el.filter === preset.name : isNeutral(el.adjustments);
+            const custom = !!preset && saved.includes(preset);
+            return (
+              <span key={preset?.id ?? "none"} className="inline-flex">
+                <button
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => applyPreset(preset)}
+                  className={`h-6 border px-2 text-[11px] font-medium ${custom ? "rounded-l-full" : "rounded-full"} ${active ? "border-ink bg-ink text-bg" : "border-line text-muted hover:text-ink"}`}
+                >
+                  {preset?.name ?? "Original"}
+                </button>
+                {custom && (
+                  <button
+                    type="button"
+                    aria-label={`Delete preset ${preset.name}`}
+                    onClick={() => setPref(PREF.imagePresets, saved.filter((p) => p.id !== preset.id))}
+                    className="flex h-6 w-5 items-center justify-center rounded-r-full border border-l-0 border-line text-muted hover:text-danger"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+        <Button size="sm" variant="ghost" className="-ml-2" aria-expanded={showAdjust} onClick={() => setShowAdjust(!showAdjust)}>
+          {showAdjust ? "Hide adjustments" : "Adjust manually"}
+        </Button>
+        {showAdjust && (
+          <div className="space-y-1">
+            {ADJUSTMENT_SLIDERS.map(({ key, label, min }) => (
+              <div key={key}>
+                <span className="text-[11px] text-muted">{label}</span>
+                <Slider
+                  label={label}
+                  min={min}
+                  max={100}
+                  step={1}
+                  value={el.adjustments[key]}
+                  onChange={(v) => set({ adjustments: { ...el.adjustments, [key]: v }, filter: null }, `adj:${key}`)}
+                />
+              </div>
+            ))}
+            <div className="flex gap-2 pt-1">
+              <TextInput aria-label="Preset name" placeholder="Preset name" maxLength={24} value={presetName} onChange={(e) => setPresetName(e.target.value)} />
+              <Button
+                size="sm"
+                className="h-8"
+                disabled={!presetName.trim() || isNeutral(el.adjustments)}
+                onClick={() => {
+                  const preset = { id: `custom-${Date.now()}`, name: presetName.trim(), adjustments: el.adjustments };
+                  setPref(PREF.imagePresets, [...saved, preset]);
+                  set({ filter: preset.name });
+                  setPresetName("");
+                }}
+              >
+                Save preset
+              </Button>
+            </div>
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+function ColorOnlyProps({ el }: { el: StickerElement | OverlayElement }) {
+  const set = useUpdate(el);
+  if (el.type === "overlay" && el.overlay === "grain") {
+    return (
+      <Section title="Overlay">
+        <p className="text-xs text-muted">Use opacity and blend mode to control how strong the grain is.</p>
+      </Section>
+    );
+  }
+  return (
+    <Section title={el.type === "sticker" ? "Sticker" : "Overlay"}>
+      <ColorControl label="Color" value={el.color} onChange={(color) => set({ color }, "color")} />
+    </Section>
+  );
+}
+
+const DEFAULT_SHADOW: Shadow = { color: "#000000", opacity: 0.35, blur: 24, offsetX: 0, offsetY: 12 };
+
+function EffectsProps({ el }: { el: DesignElement }) {
+  const set = useUpdate(el);
+  const sh = el.shadow;
+  return (
+    <Section title="Effects">
+      <div>
+        <Label>Blend mode</Label>
+        <div className="mt-1">
+          <Select label="Blend mode" value={el.blendMode} onChange={(blendMode) => set({ blendMode })} options={BLEND_MODES.map((m) => ({ value: m, label: title(m) }))} />
+        </div>
       </div>
-      <p className="text-[11px] text-muted">The image always fills its frame. Resize the frame from a side handle to crop.</p>
+      {el.type !== "overlay" && (
+        <>
+          <Toggle label="Drop shadow" checked={!!sh} onChange={(on) => set({ shadow: on ? DEFAULT_SHADOW : null })} />
+          {sh && (
+            <>
+              <ColorControl label="Shadow color" value={sh.color} onChange={(color) => set({ shadow: { ...sh, color } }, "shadow")} />
+              <Row>
+                <NumberField label="Shadow blur" prefix="◌" min={0} max={400} value={sh.blur} onChange={(blur) => set({ shadow: { ...sh, blur } })} />
+                <NumberField label="Shadow opacity" prefix="%" min={0} max={100} value={Math.round(sh.opacity * 100)} onChange={(o) => set({ shadow: { ...sh, opacity: o / 100 } })} />
+              </Row>
+              <Row>
+                <NumberField label="Shadow offset X" prefix="X" min={-500} max={500} value={sh.offsetX} onChange={(offsetX) => set({ shadow: { ...sh, offsetX } })} />
+                <NumberField label="Shadow offset Y" prefix="Y" min={-500} max={500} value={sh.offsetY} onChange={(offsetY) => set({ shadow: { ...sh, offsetY } })} />
+              </Row>
+            </>
+          )}
+        </>
+      )}
     </Section>
   );
 }
@@ -216,7 +471,9 @@ export function PropertiesPanel() {
       </Section>
       {single?.type === "text" && <TextProps key={single.id} el={single} />}
       {single?.type === "shape" && <ShapeProps el={single} />}
-      {single?.type === "image" && <ImageProps el={single} />}
+      {single?.type === "image" && <ImageProps key={single.id} el={single} />}
+      {(single?.type === "sticker" || single?.type === "overlay") && <ColorOnlyProps el={single} />}
+      {single && <EffectsProps el={single} />}
     </div>
   );
 }

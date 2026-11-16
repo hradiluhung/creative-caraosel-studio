@@ -124,7 +124,8 @@ try {
   // ---------- 3. Typography ----------
   const textId = doc.slides[0].elements[0].id;
   await page.click('ul[aria-label="Layers"] li:last-child');
-  await page.select(byLabel("Font family"), "Bebas Neue");
+  await click(byLabel("Font family"));
+  await click(byLabel("Use Bebas Neue"));
   const size = await page.waitForSelector(byLabel("Font size"));
   await size.click();
   await size.type("120");

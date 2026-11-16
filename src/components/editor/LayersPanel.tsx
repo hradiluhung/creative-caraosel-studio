@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Eye, EyeOff, Image as ImageIcon, Lock, Shapes, Type, Unlock } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Image as ImageIcon, Layers2, Lock, Shapes, Sticker, Type, Unlock } from "lucide-react";
 import { useState } from "react";
 import { getElements, moveElementToIndex, updateElements } from "@/document/operations";
 import type { DesignElement } from "@/document/schema";
@@ -8,7 +8,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
 import { IconButton } from "../ui/primitives";
 
-const ICONS = { text: Type, image: ImageIcon, shape: Shapes } as const;
+const ICONS = { text: Type, image: ImageIcon, shape: Shapes, sticker: Sticker, overlay: Layers2 } as const;
 
 function LayerRow({ el, index, count }: { el: DesignElement; index: number; count: number }) {
   const selected = useEditorStore((s) => s.selection.includes(el.id));

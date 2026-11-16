@@ -196,20 +196,75 @@ Not used yet, on purpose: **shadcn/ui** (the handful of primitives needed are in
   exported slices and matches the editor preview**, offline reload through the service worker, and
   the phone layout with emulated touch.
 
-## 11. Known limitations (honest list)
+## 11. Phase 2: professional design features
 
-- **Not tested on a real iPhone or in Safari.** All browser testing was Chrome, with phone
-  emulation for the mobile layout. Installing to the Home Screen, the iOS keyboard during inline
-  text editing, share-sheet export and memory behaviour with large photos still need a device pass.
+Schema version 2 (migration `1 -> 2` in `migrations.ts` fills neutral defaults, so Phase 1
+projects open unchanged):
+
+- `Background` gains `linear` (CSS-style angle) and `radial` gradients with 2 to 6 stops.
+- Every element gains `blendMode` and an optional `shadow`.
+- `Text` gains `transform` (letter case, applied at render time only), outline and a background box.
+- `Image` gains `adjustments` (14 values, all 0 when neutral), `filter` (display name only),
+  `mask`, border, and a nullable `assetId`: `null` is an empty **photo placeholder**.
+- New element types `sticker` (key into `src/render/stickers.ts` plus a color) and `overlay`
+  (grain, light leak, vignette).
+- `Project.brandKitId`.
+
+Decisions:
+
+- **A filter is a named set of adjustments, never baked pixels.** `src/render/adjust.ts` is a pure
+  function over an RGBA byte array (unit tested in Node, ready to move into a Web Worker). Grain
+  uses a seeded PRNG so preview and export get the same noise.
+- **Processed bitmaps are memoized** in `ImageStore.getProcessed` (keyed by asset, frame size, flips,
+  adjustments and output size). The editor caps them at 1600 px, thumbnails render tiny ones, the
+  exporter asks for full resolution. Blur and sharpen radii are relative to the bitmap size, so the
+  look is the same at every resolution.
+- **Images are drawn as a pattern fill of their mask outline**, which is why border and shadow follow
+  any mask shape with no extra code per shape.
+- **Custom fonts:** files are checked by signature, loaded through `FontFace` (a corrupted file fails
+  here and is rejected), stored as Blobs in the `fonts` store and re-registered by
+  `loadCustomFonts()` before the editor opens a project. Documents store a stable family name;
+  renaming only changes the label. A custom family can never shadow a built-in one. Fonts live in
+  this app only: a web app cannot install fonts system-wide.
+- **Templates are project documents.** Built-ins are functions in `src/templates/builtin.ts` that
+  return a document; user templates are stored documents. Using one is `cloneProject` with fresh
+  ids. Adding a template (also for a future admin tool) means adding one entry to a list. Placeholders
+  are drawn in the editor and thumbnails, and left out of exports (the export dialog says so).
+- **Brand kits** are their own store. Their logos are ordinary assets, and deleting a project never
+  removes an asset a template or brand kit still uses.
+- Database version 2 adds the `fonts`, `templates` and `brandKits` stores (existing data untouched).
+  Favorites, recents and saved filter presets are per-device preferences in `localStorage`.
+
+Phase 2 verification: 54 unit tests in total, plus `tests/e2e-phase2.mjs` (24 checks in Chrome):
+gradient colors in the exported PNG, black-and-white filter and ellipse mask in exported pixels,
+stickers, overlays, text effects, custom font upload surviving a reload, a rejected corrupted font,
+brand kit with custom font and logo, template preview and use, filling a placeholder, and saving a
+project as a template.
+
+## 12. Known limitations (honest list)
+
+- **Phase 2 was verified in desktop Chrome only.** Phase 1 has been used on an iPhone; the Phase 2
+  panels, the iOS Files picker for fonts and filter speed on a phone still need a device pass.
+- Image adjustments run on the main thread. One photo is fine; dragging a slider on a very large
+  frame can stutter on phones. Moving `applyAdjustments` into a Web Worker is the planned fix.
+- Of the 25 template categories in the specification, 10 have a built-in template so far.
+- Not built yet from the Phase 2 wish list: curved text, auto-fit text, paragraph spacing, vertical
+  alignment, duotone and color-overlay filters, background removal, free-form drawing, pattern and
+  image backgrounds, SVG import, gradient fills on shapes, RGB/HSL inputs (the native color picker
+  covers them on most platforms).
+- Stickers are a small original vector set (18). Textures are procedural (grain, light leak,
+  vignette); there are no photo-based textures.
+- A project that uses a custom font shows a fallback font on a device where that font was never
+  uploaded (the panel says so).
+### Carried over from Phase 1
+
 - Local only: no accounts, no cloud sync, no project folders yet.
 - No grouping, rulers, grid, or free crop/pan of an image inside its frame (the frame always
   center-crops). Resizing an image from a side handle shows a stretched preview until release.
-- Backgrounds are solid or transparent; gradients come with Phase 2.
-- Eight built-in font families; custom font upload is Phase 2.
 - Seamless projects cannot be converted to independent ones (or back) after creation. In seamless
   mode slides can be added or removed at the end only.
 - Undo history is per editing session and is not persisted.
 - Images are decoded at full resolution; preview proxies and Web Worker decoding are not in yet,
   so many very large photos in one project will be heavy on phones.
 - SVG import is not enabled (it needs sanitising first).
-- Templates, stickers, brand kits, video, AI features: later phases, nothing stubbed in the UI.
+- Video, AI features, cloud sync: later phases, nothing stubbed in the UI.

@@ -1,8 +1,11 @@
 /** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
-import { createImage, createShape, createText, placementFor, type Placement, type TextPreset } from "@/document/factory";
+import { createImage, createOverlay, createShape, createSticker, createText, placementFor, type Placement, type TextPreset } from "@/document/factory";
 import { getSurface, rotatedBounds } from "@/document/geometry";
 import { addAssetRef, addElements, updateElements } from "@/document/operations";
-import type { AssetRef, DesignElement, ShapeKind } from "@/document/schema";
+import type { AssetRef, DesignElement, OverlayKind, ShapeKind, TextElement } from "@/document/schema";
+import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
+import { measureTextHeight } from "@/render/scene";
+import type { StickerDef } from "@/render/stickers";
 import { importImageFile } from "@/persistence/assets";
 import { useEditorStore } from "@/store/editorStore";
 
@@ -20,6 +23,40 @@ export function currentPlacement(): Placement | null {
 export function insertText(preset: TextPreset) {
   const p = currentPlacement();
   if (p) store().addElement(createText(preset, p));
+}
+
+/** Text in a given font (brand kit styles). Waits for the face so the box is measured correctly. */
+export async function insertStyledText(preset: TextPreset, fontFamily: string, color?: string) {
+  const p = currentPlacement();
+  if (!p) return;
+  const base = createText(preset, p);
+  const el: TextElement = { ...base, fontFamily, fontWeight: resolveWeight(fontFamily, base.fontWeight), fill: color ?? base.fill };
+  await ensureFontsLoaded([{ family: el.fontFamily, weight: el.fontWeight, italic: false }]);
+  store().addElement({ ...el, height: measureTextHeight(el) });
+}
+
+export function insertSticker(def: StickerDef) {
+  const p = currentPlacement();
+  if (!p) return;
+  const el = createSticker(def.id, def.name, def.width / def.height, p);
+  store().addElement({ ...el, color: def.color ?? el.color });
+}
+
+export function insertOverlay(kind: OverlayKind) {
+  const p = currentPlacement();
+  if (p) store().addElement(createOverlay(kind, p));
+}
+
+/** Put a photo into an existing frame (placeholder or image), keeping its box, mask and look. */
+export async function replaceImage(elementId: string, file: File): Promise<string | null> {
+  try {
+    const ref = await importImageFile(file);
+    const s = store();
+    s.commit((p) => updateElements(addAssetRef(p, ref), s.activeSurfaceId, [elementId], { assetId: ref.id } as Partial<DesignElement>));
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : "The image could not be imported.";
+  }
 }
 
 export function insertShape(shape: ShapeKind) {

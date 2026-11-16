@@ -1,16 +1,20 @@
 "use client";
 
-import { ArrowRight, Circle, Hexagon, ImagePlus, Minus, Square, Star, Triangle } from "lucide-react";
+import { ArrowRight, Circle, Hexagon, ImagePlus, Minus, Square, Star, Triangle, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SHAPE_LABELS } from "@/document/factory";
 import { getSurface } from "@/document/geometry";
-import { setBackground } from "@/document/operations";
-import type { ShapeKind } from "@/document/schema";
+import { addAssetRef, setBackground } from "@/document/operations";
+import type { AssetRef, Background, OverlayKind, ShapeKind } from "@/document/schema";
+import { getAssetBlob, listBrandKits, type BrandKit } from "@/persistence/db";
+import { STICKERS, type StickerDef } from "@/render/stickers";
+import { useObjectUrl } from "@/lib/useObjectUrl";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
-import { Button, ColorField, Label } from "../ui/primitives";
-import { importImages, insertAsset, insertShape, insertText } from "./actions";
+import { Button, ColorField, IconButton, Label, NumberField, Segmented, Select } from "../ui/primitives";
+import { importImages, insertAsset, insertOverlay, insertShape, insertSticker, insertStyledText, insertText } from "./actions";
+import { ColorControl } from "./ColorControl";
 
 const SHAPES: Array<{ kind: ShapeKind; icon: ReactNode }> = [
   { kind: "rect", icon: <Square /> },
@@ -31,6 +35,18 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
+const GRADIENT_PRESETS: string[][] = [
+  ["#ff9a8b", "#ff6a88", "#ff99ac"],
+  ["#f6d365", "#fda085"],
+  ["#a1c4fd", "#c2e9fb"],
+  ["#d4fc79", "#96e6a1"],
+  ["#fdfbfb", "#e2e0dc"],
+  ["#0f2027", "#203a43", "#2c5364"],
+  ["#232526", "#414345"],
+];
+
+const evenStops = (colors: string[]) => colors.map((color, i) => ({ offset: colors.length === 1 ? 0 : i / (colors.length - 1), color }));
+
 export function BackgroundControls() {
   const project = useEditorStore((s) => s.project);
   const activeSurfaceId = useEditorStore((s) => s.activeSurfaceId);
@@ -38,24 +54,185 @@ export function BackgroundControls() {
   const surface = project && getSurface(project, activeSurfaceId);
   if (!surface) return null;
   const bg = surface.background;
+  const set = (next: Background, coalesce?: string) =>
+    commit((p) => setBackground(p, activeSurfaceId, next), coalesce ? { coalesce: `bg:${coalesce}:${activeSurfaceId}` } : undefined);
+  const colors = bg.type === "linear" || bg.type === "radial" ? bg.stops.map((s) => s.color) : bg.type === "solid" ? [bg.color, "#d9d4cc"] : ["#ffffff", "#d9d4cc"];
+  const gradient = (type: "linear" | "radial", cs: string[], coalesce?: string) =>
+    set(type === "linear" ? { type, angle: bg.type === "linear" ? bg.angle : 180, stops: evenStops(cs) } : { type, stops: evenStops(cs) }, coalesce);
+
+  return (
+    <div className="space-y-2.5">
+      <Segmented
+        label="Background type"
+        value={bg.type}
+        onChange={(type) => {
+          if (type === "solid") set({ type, color: colors[0] });
+          else if (type === "transparent") set({ type });
+          else gradient(type, colors);
+        }}
+        options={[
+          { value: "solid", label: "Solid" },
+          { value: "linear", label: "Linear" },
+          { value: "radial", label: "Radial" },
+          { value: "transparent", label: "None" },
+        ]}
+      />
+      {bg.type === "solid" && <ColorControl label="Background color" value={bg.color} onChange={(color) => set({ type: "solid", color }, "solid")} />}
+      {bg.type === "transparent" && <p className="text-xs text-muted">Transparent in PNG exports. JPG fills white.</p>}
+      {(bg.type === "linear" || bg.type === "radial") && (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {GRADIENT_PRESETS.map((preset) => (
+              <button
+                key={preset.join()}
+                type="button"
+                aria-label={`Gradient ${preset.join(" to ")}`}
+                onClick={() => gradient(bg.type, preset)}
+                style={{ background: `linear-gradient(135deg, ${preset.join(", ")})` }}
+                className="h-6 w-6 rounded-full border border-line-strong"
+              />
+            ))}
+          </div>
+          {colors.map((c, i) => (
+            <div key={i} className="flex items-start gap-1">
+              <div className="min-w-0 flex-1">
+                <ColorField
+                  label={`Gradient color ${i + 1}`}
+                  value={c}
+                  onChange={(color) => gradient(bg.type, colors.map((x, j) => (j === i ? color : x)), `stop${i}`)}
+                />
+              </div>
+              <IconButton label={`Remove gradient color ${i + 1}`} disabled={colors.length <= 2} onClick={() => gradient(bg.type, colors.filter((_, j) => j !== i))}>
+                <X />
+              </IconButton>
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+            <Button size="sm" disabled={colors.length >= 6} onClick={() => gradient(bg.type, [...colors, colors[colors.length - 1]])}>
+              Add color
+            </Button>
+            {bg.type === "linear" && (
+              <div className="w-24">
+                <NumberField label="Gradient angle" prefix="∠" min={0} max={360} value={bg.angle} onChange={(angle) => set({ ...bg, angle }, "angle")} />
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StickerThumb({ def }: { def: StickerDef }) {
+  const color = def.color ?? "currentColor";
+  return (
+    <svg viewBox={`${-6} ${-6} ${def.width + 12} ${def.height + 12}`} className="h-full w-full" aria-hidden>
+      <path
+        d={def.data}
+        fill={def.mode === "fill" ? color : "none"}
+        fillRule={def.evenOdd ? "evenodd" : "nonzero"}
+        stroke={def.mode === "stroke" ? color : def.mode === "fill" && def.color ? "rgba(0,0,0,0.25)" : "none"}
+        strokeWidth={def.mode === "stroke" ? (def.strokeWidth ?? 4) : 1}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+const OVERLAYS: Array<{ kind: OverlayKind; label: string; preview: string }> = [
+  { kind: "grain", label: "Film grain", preview: "repeating-conic-gradient(#8a8a8a 0% 25%, #b5b5b5 0% 50%) 0 0 / 4px 4px" },
+  { kind: "light-leak", label: "Light leak", preview: "radial-gradient(circle at 95% 5%, #ff8a3d, #ff8a3d88 35%, transparent 80%), #2a2a2a" },
+  { kind: "vignette", label: "Vignette", preview: "radial-gradient(circle, #d8d4cc 35%, #111 100%)" },
+];
+
+function BrandSection() {
+  const project = useEditorStore((s) => s.project);
+  const kit = useEditorStore((s) => s.brandKit);
+  const commit = useEditorStore((s) => s.commit);
+  const [kits, setKits] = useState<BrandKit[] | null>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void listBrandKits().then((list) => live && setKits(list), () => live && setKits([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!project || !kits) return null;
+  if (kits.length === 0) {
+    return <p className="text-xs text-muted">No brand kit yet. Create one from the Brand kits tab on the projects screen.</p>;
+  }
   return (
     <div className="space-y-2">
-      <ColorField
-        label="Background color"
-        value={bg.type === "solid" ? bg.color : "#ffffff"}
-        onChange={(color) => commit((p) => setBackground(p, activeSurfaceId, { type: "solid", color }), { coalesce: `bg:${activeSurfaceId}` })}
+      <Select
+        label="Brand kit"
+        value={project.brandKitId ?? ""}
+        onChange={(id) => commit((p) => ({ ...p, brandKitId: id || null }))}
+        options={[{ value: "", label: "No brand kit" }, ...kits.map((k) => ({ value: k.id, label: k.name }))]}
       />
-      <label className="flex items-center gap-2 text-xs text-muted">
-        <input
-          type="checkbox"
-          checked={bg.type === "transparent"}
-          onChange={(e) =>
-            commit((p) => setBackground(p, activeSurfaceId, e.target.checked ? { type: "transparent" } : { type: "solid", color: "#ffffff" }))
-          }
-        />
-        Transparent (PNG export only, JPG fills white)
-      </label>
+      {kit && (
+        <>
+          {kit.colors.length > 0 && (
+            <div className="flex flex-wrap gap-1" aria-label="Brand colors">
+              {kit.colors.map((c) => (
+                <span key={c} title={c.toUpperCase()} style={{ background: c }} className="h-5 w-5 rounded-full border border-line-strong" />
+              ))}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button size="sm" onClick={() => void insertStyledText("heading", kit.headingFont, kit.colors[0])}>
+              Brand heading
+            </Button>
+            <Button size="sm" onClick={() => void insertStyledText("body", kit.bodyFont)}>
+              Brand body
+            </Button>
+          </div>
+          {kit.logos.length > 0 && (
+            <div className="grid grid-cols-4 gap-1.5 md:grid-cols-3">
+              {kit.logos.map((logo) => (
+                <BrandLogo key={logo.id} logo={logo} onLoaded={() => setTick((t) => t + 1)} />
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-muted">Brand colors appear as round swatches under every color field.</p>
+        </>
+      )}
     </div>
+  );
+}
+
+function BrandLogo({ logo, onLoaded }: { logo: AssetRef; onLoaded: () => void }) {
+  const [blob, setBlob] = useState<Blob | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getAssetBlob(logo.id).then((b) => {
+      if (live && b) {
+        setBlob(b);
+        onLoaded();
+      }
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logo.id]);
+  const url = useObjectUrl(blob);
+  return (
+    <button
+      type="button"
+      aria-label={`Add logo ${logo.name}`}
+      title={`Add ${logo.name}`}
+      onClick={() => {
+        const s = useEditorStore.getState();
+        s.commit((p) => addAssetRef(p, logo));
+        insertAsset(logo);
+      }}
+      className="flex aspect-square items-center justify-center overflow-hidden rounded-[4px] border border-line bg-sunken p-1 hover:border-ink"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview */}
+      {url && <img src={url} alt="" className="max-h-full max-w-full object-contain" draggable={false} />}
+    </button>
   );
 }
 
@@ -153,6 +330,39 @@ export function InsertPanel({ images }: { images: ImageStore }) {
             })}
           </div>
         )}
+      </Section>
+
+      <Section title="Stickers">
+        <div className="grid grid-cols-6 gap-1 md:grid-cols-4">
+          {STICKERS.map((def) => (
+            <button
+              key={def.id}
+              type="button"
+              title={def.name}
+              aria-label={`Add sticker ${def.name}`}
+              onClick={() => insertSticker(def)}
+              className="flex aspect-square items-center justify-center rounded-[5px] border border-line p-1.5 hover:border-line-strong hover:bg-sunken"
+            >
+              <StickerThumb def={def} />
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Overlays">
+        <div className="grid grid-cols-3 gap-1.5">
+          {OVERLAYS.map((o) => (
+            <button key={o.kind} type="button" aria-label={`Add overlay ${o.label}`} onClick={() => insertOverlay(o.kind)} className="group text-left">
+              <span className="block aspect-[4/3] rounded-[4px] border border-line group-hover:border-ink" style={{ background: o.preview }} />
+              <span className="mt-1 block text-[10px] text-muted">{o.label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted">Overlays cover the whole slide and start locked. Select them in Layers.</p>
+      </Section>
+
+      <Section title="Brand">
+        <BrandSection />
       </Section>
 
       <Section title="Background">

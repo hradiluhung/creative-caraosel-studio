@@ -12,7 +12,18 @@ import {
 } from "@/persistence/db";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 import { Button, Dialog, FloatingMenu, IconButton, TextInput } from "../ui/primitives";
+import { saveProjectAsTemplate } from "@/templates";
+import { cn } from "@/lib/cn";
+import { BrandKits } from "./BrandKits";
 import { NewProjectDialog } from "./NewProjectDialog";
+import { TemplateLibrary } from "./TemplateLibrary";
+
+type Tab = "projects" | "templates" | "brand";
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "projects", label: "Projects" },
+  { id: "templates", label: "Templates" },
+  { id: "brand", label: "Brand kits" },
+];
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -67,6 +78,8 @@ export function Dashboard() {
   const [menu, setMenu] = useState<{ meta: ProjectMeta; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ meta: ProjectMeta; name: string } | null>(null);
   const [deleting, setDeleting] = useState<ProjectMeta | null>(null);
+  const [tab, setTab] = useState<Tab>("projects");
+  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(
     () =>
@@ -115,7 +128,7 @@ export function Dashboard() {
       <header className="mx-auto flex max-w-6xl items-end justify-between gap-4 px-5 pt-10 pb-6 sm:px-8">
         <div>
           <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Creative Carousel Studio</p>
-          <h1 className="mt-1 font-display text-[34px] leading-none font-bold tracking-tight">Projects</h1>
+          <h1 className="mt-1 font-display text-[34px] leading-none font-bold tracking-tight">{TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
         <Button variant="primary" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" /> New project
@@ -123,6 +136,28 @@ export function Dashboard() {
       </header>
 
       <main className="pb-safe mx-auto max-w-6xl px-5 sm:px-8">
+        <nav aria-label="Sections" className="mb-6 flex gap-5 border-b border-line">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              aria-current={tab === t.id ? "page" : undefined}
+              onClick={() => setTab(t.id)}
+              className={cn("-mb-px border-b-2 pb-2.5 text-[13px] font-medium", tab === t.id ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink")}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+        {notice && (
+          <p role="status" className="mb-6 rounded-md border border-line bg-sunken px-3 py-2 text-xs">
+            {notice}
+          </p>
+        )}
+        {tab === "templates" && <TemplateLibrary />}
+        {tab === "brand" && <BrandKits />}
+        {tab === "projects" && (
+        <>
         <div className="relative mb-6 max-w-xs">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
           <TextInput aria-label="Search projects" placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
@@ -155,6 +190,8 @@ export function Dashboard() {
             ))}
           </section>
         )}
+        </>
+        )}
       </main>
 
       {creating && <NewProjectDialog onClose={() => setCreating(false)} />}
@@ -168,6 +205,14 @@ export function Dashboard() {
             { label: "Open", onSelect: () => (window.location.href = `/editor?id=${encodeURIComponent(menu.meta.id)}`) },
             { label: "Rename", onSelect: () => setRenaming({ meta: menu.meta, name: menu.meta.name }) },
             { label: "Duplicate", onSelect: () => run(() => duplicateStoredProject(menu.meta.id)) },
+            {
+              label: "Save as template",
+              onSelect: () =>
+                run(async () => {
+                  await saveProjectAsTemplate(menu.meta.id, menu.meta.name);
+                  setNotice(`“${menu.meta.name}” was saved to Templates → My templates.`);
+                }),
+            },
             { label: "Delete", danger: true, onSelect: () => setDeleting(menu.meta) },
           ]}
         />

@@ -23,6 +23,8 @@ export interface RenderFrameOptions {
   quality?: number;
   /** Fill behind transparent areas (formats without alpha need one). */
   matte?: string;
+  /** Draw empty photo frames (thumbnails yes, real exports no). */
+  showPlaceholders?: boolean;
 }
 
 export function maxPixelRatio(width: number, height: number) {
@@ -43,7 +45,12 @@ export async function renderFrame(
     const layer = new Konva.Layer({ listening: false });
     stage.add(layer);
     if (opts.matte) layer.add(new Konva.Rect({ width: frame.width, height: frame.height, fill: opts.matte }));
-    const content = buildSurfaceContent(surface, res, { interactive: false });
+    const content = buildSurfaceContent(surface, res, {
+      interactive: false,
+      quality: opts.pixelRatio,
+      maxImageSide: 8192,
+      showPlaceholders: opts.showPlaceholders ?? false,
+    });
     // Slicing a panorama is just an offset: no element is ever re-laid out per slide.
     content.position({ x: -frame.x, y: -frame.y });
     layer.add(content);
@@ -167,5 +174,5 @@ export function downloadBlob(blob: Blob, filename: string) {
 /** Small preview render used for slide thumbnails and dashboard covers. */
 export async function renderThumbnail(project: Project, frame: ExportFrame, res: ImageStore, maxSide = 320): Promise<Blob> {
   const pixelRatio = Math.min(maxSide / Math.max(frame.width, frame.height), 1);
-  return renderFrame(project, frame, res, { pixelRatio, mime: "image/jpeg", quality: 0.8, matte: "#ffffff" });
+  return renderFrame(project, frame, res, { pixelRatio, mime: "image/jpeg", quality: 0.8, matte: "#ffffff", showPlaceholders: true });
 }

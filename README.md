@@ -4,7 +4,7 @@ A browser-based studio for designing Instagram carousels: independent slides or 
 panorama that is sliced on export. Works on desktop and phones, installable as a PWA, and keeps
 every project on the device (IndexedDB) so it opens offline.
 
-**Status: Phase 1 (foundation and basic editor) is implemented and tested.**
+**Status: Phase 1 (foundation and basic editor) and Phase 2 (professional design features) are implemented and tested.**
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design, the full feature status and known limitations.
 
 ## Run it
@@ -23,7 +23,7 @@ npm run start        # production build, service worker and offline shell active
 npm run typecheck
 npm run lint
 npm test             # unit tests: document model, geometry, migrations, persistence, naming
-npm run test:e2e     # real-browser workflow test, see the header of tests/e2e.mjs
+npm run test:e2e     # real-browser workflow tests (tests/e2e.mjs, tests/e2e-phase2.mjs), see their headers
 ```
 
 ## Try it on an iPhone
@@ -44,3 +44,19 @@ open the URL in Safari, then Share → Add to Home Screen.
 - Export: JPG or PNG, 1× or 2×, one slide or all slides as an ordered ZIP, progress and cancel
 - PWA: manifest, icons, offline shell, self-hosted fonts
 - Phone layout: bottom toolbar, bottom sheets, pinch zoom, two-finger pan, long-press menu
+
+## What Phase 2 adds
+
+- Fonts: 28 built-in families in 8 categories, custom font upload (TTF, OTF, WOFF, WOFF2) stored on
+  the device and restored on every start, font picker with search, favorites, recents, rename,
+  weight and style mapping
+- Text: letter case, outline, background box, drop shadow
+- Photos: 14 non-destructive adjustments, 10 filter looks, your own saved presets, 7 mask shapes,
+  borders, shadows, replace photo
+- Backgrounds: linear and radial gradients with up to 6 colors
+- Stickers and doodles (18), film grain / light leak / vignette overlays, blend modes on every layer
+- Templates: 10 fully editable built-in templates with photo placeholders, filters by category,
+  ratio and length, favorites, and "Save as template" for your own projects
+- Brand kits: colors, heading and body fonts, logos; attach a kit to a project to get its swatches,
+  text styles and logos in the editor
+- Colors: recent colors, brand swatches, eyedropper where the browser has one

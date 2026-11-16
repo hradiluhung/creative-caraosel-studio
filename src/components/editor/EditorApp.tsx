@@ -3,7 +3,8 @@
 import { Layers, Maximize, PaintBucket, Plus, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DocumentError } from "@/document/migrations";
-import { getAssetBlob, loadProject } from "@/persistence/db";
+import { loadCustomFonts } from "@/persistence/customFonts";
+import { getAssetBlob, getBrandKit, loadProject } from "@/persistence/db";
 import { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
@@ -78,6 +79,18 @@ function Workspace({ images }: { images: ImageStore }) {
   const [dropErrors, setDropErrors] = useState<string[]>([]);
 
   useAutosave(images);
+
+  // Keep the attached brand kit loaded for the color fields and the Brand section.
+  const brandKitId = project?.brandKitId ?? null;
+  useEffect(() => {
+    let live = true;
+    const setKit = useEditorStore.getState().setBrandKit;
+    if (!brandKitId) setKit(null);
+    else void getBrandKit(brandKitId).then((kit) => live && setKit(kit ?? null), () => live && setKit(null));
+    return () => {
+      live = false;
+    };
+  }, [brandKitId]);
   useEditorShortcuts(!exporting);
 
   const canvas = (
@@ -229,6 +242,8 @@ export default function EditorApp() {
     (async () => {
       if (!id) return setState({ kind: "error", message: "No project was specified." });
       try {
+        // Custom fonts must be registered before any text is measured or drawn.
+        await loadCustomFonts();
         const project = await loadProject(id);
         if (cancelled) return;
         if (!project) return setState({ kind: "error", message: "This project does not exist on this device." });
