@@ -9,7 +9,7 @@ import {
   packageZip,
   type ExportedFile,
 } from "@/export/exporter";
-import { countPlaceholders } from "@/document/operations";
+import { countPlaceholders, countVideos } from "@/document/operations";
 import { FORMAT_INFO, zipFileName, type ImageFormat } from "@/export/naming";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
@@ -35,6 +35,7 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
   if (!project) return null;
 
   const placeholders = countPlaceholders(project);
+  const videoLayers = countVideos(project);
   const canDouble = maxPixelRatio(project.width, project.height) >= 2;
   const pixelRatio = Number(scale);
   const indices = range === "all" ? project.slides.map((_, i) => i) : [focusIndex];
@@ -174,6 +175,12 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
         {placeholders > 0 && phase.kind === "idle" && (
           <p role="note" data-testid="placeholder-warning" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
             {placeholders} empty photo {placeholders === 1 ? "frame is" : "frames are"} still waiting for a photo. Empty frames are left out of the export.
+          </p>
+        )}
+        {videoLayers > 0 && phase.kind === "idle" && (
+          <p role="note" data-testid="video-warning" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
+            This project has {videoLayers} video {videoLayers === 1 ? "layer" : "layers"}. Video export (MP4) is not built yet, so {videoLayers === 1 ? "it is" : "they are"} exported
+            as a still image of the poster frame.
           </p>
         )}
         {running && (

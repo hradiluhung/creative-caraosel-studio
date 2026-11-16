@@ -24,6 +24,8 @@ export interface ProjectMeta {
 
 export interface StoredAsset extends AssetRef {
   blob: Blob;
+  /** Video assets only: a small still frame for instant previews (never referenced by documents). */
+  poster?: Blob;
   createdAt: string;
 }
 
@@ -235,6 +237,10 @@ export async function putAsset(asset: StoredAsset): Promise<void> {
 
 export async function getAssetBlob(id: string): Promise<Blob | undefined> {
   return (await (await db()).get("assets", id))?.blob;
+}
+
+export async function getAssetPoster(id: string): Promise<Blob | undefined> {
+  return (await (await db()).get("assets", id))?.poster;
 }
 
 /** Asset refs of a project that have no element using them (candidates for cleanup UI). */

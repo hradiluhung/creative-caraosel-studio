@@ -16,6 +16,7 @@ import {
   type ShapeKind,
   type Slide,
   type TextElement,
+  type VideoElement,
 } from "./schema";
 
 export const DEFAULT_BACKGROUND: Background = { type: "solid", color: "#ffffff" };
@@ -165,6 +166,32 @@ const IMAGE_DEFAULTS = {
   borderColor: "#ffffff",
   borderWidth: 0,
 };
+
+export function createVideo(asset: AssetRef, p: Placement): VideoElement {
+  const { width, height } = fitWithin(asset.width, asset.height, p.maxWidth * 0.8, p.maxHeight * 0.8);
+  return {
+    ...base(asset.name.replace(/\.[^.]+$/, "") || "Video"),
+    type: "video",
+    assetId: asset.id,
+    x: Math.round(p.centerX - width / 2),
+    y: Math.round(p.centerY - height / 2),
+    width,
+    height,
+    trimStart: 0,
+    trimEnd: asset.duration ?? 1,
+    volume: 1,
+    muted: false,
+    playbackRate: 1,
+    loop: false,
+    posterTime: 0,
+    flipX: false,
+    flipY: false,
+    cornerRadius: 0,
+    mask: "rect",
+    borderColor: "#ffffff",
+    borderWidth: 0,
+  };
+}
 
 /** Empty photo frame that the user fills later. Used by templates. */
 export function createPlaceholder(box: { x: number; y: number; width: number; height: number }, name = "Photo"): ImageElement {

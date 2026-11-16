@@ -7,6 +7,7 @@ import Konva from "konva";
 import { getExportFrames, getSurface, type ExportFrame } from "@/document/geometry";
 import { usedAssetIds } from "@/document/operations";
 import type { Project } from "@/document/schema";
+import { videoElements } from "@/document/timing";
 import { ensureFontsLoaded } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
 import { buildSurfaceContent, collectFonts } from "@/render/scene";
@@ -39,6 +40,8 @@ export async function renderFrame(
 ): Promise<Blob> {
   const surface = getSurface(project, frame.surfaceId);
   if (!surface) throw new Error(`Slide ${frame.slideIndex + 1}: surface not found`);
+  // Stills show every video at its poster time; that exact frame has to be captured first.
+  await res.videos.preparePosters(videoElements(surface.elements));
   const container = document.createElement("div");
   const stage = new Konva.Stage({ container, width: frame.width, height: frame.height });
   try {
@@ -117,7 +120,14 @@ export async function exportSlides(project: Project, res: ImageStore, opts: Expo
   check();
   const missing = [...usedAssetIds(project)].filter((id) => res.isMissing(id));
   if (missing.length > 0) {
-    throw new Error(`${missing.length} image(s) used in this project could not be loaded, so the export was stopped.`);
+    throw new Error(`${missing.length} image or video file(s) used in this project could not be loaded, so the export was stopped.`);
+  }
+  const clips = [...videoElements(project.panorama.elements), ...project.slides.flatMap((s) => videoElements(s.elements))];
+  await res.videos.preparePosters(clips);
+  check();
+  const unreadable = clips.filter((el) => res.videos.posterFailed(el));
+  if (unreadable.length > 0) {
+    throw new Error(`The poster frame of "${unreadable[0].name}" could not be read from its video, so the export was stopped.`);
   }
 
   const info = FORMAT_INFO[opts.format];

@@ -3,7 +3,7 @@
 import { Search, Star, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aspectRatioLabel, getExportFrames } from "@/document/geometry";
-import { getAssetBlob } from "@/persistence/db";
+import { getAssetBlob, getAssetPoster } from "@/persistence/db";
 import { loadCustomFonts } from "@/persistence/customFonts";
 import { createProjectFromTemplate, deleteUserTemplate, listAllTemplates, type TemplateInfo } from "@/templates";
 import { cn } from "@/lib/cn";
@@ -34,7 +34,7 @@ function useTemplateThumbs(requests: Array<{ key: string; template: TemplateInfo
         import("@/render/scene"),
       ]);
       await loadCustomFonts();
-      const images = new ImageStore(getAssetBlob);
+      const images = new ImageStore(getAssetBlob, getAssetPoster);
       for (const r of pending) {
         if (cancelled) break;
         try {

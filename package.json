@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "node tests/e2e.mjs && node tests/e2e-phase2.mjs"
+    "test:e2e": "node tests/e2e.mjs && node tests/e2e-phase2.mjs && node tests/e2e-phase3.mjs"
   },
   "dependencies": {
     "@fontsource/abril-fatface": "^5.3.0",

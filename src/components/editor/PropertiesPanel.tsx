@@ -36,7 +36,10 @@ import {
   type ShapeElement,
   type StickerElement,
   type TextElement,
+  type VideoElement,
 } from "@/document/schema";
+import { clampTrim, clipDuration, formatSeconds, videoTimeAt } from "@/document/timing";
+import { VIDEO_LABEL, type VideoMime } from "@/persistence/videoSniff";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
 import { FILTER_PRESETS, type FilterPreset } from "@/render/adjust";
 import { ensureFontsLoaded, getFont, resolveItalic, resolveWeight } from "@/render/fonts";
@@ -250,6 +253,82 @@ function AdjustSlider({ label, min, value, onChange }: { label: string; min: num
   );
 }
 
+/** Mask, corner radius, border and flips: shared by photo and video frames. */
+function FrameStyleControls({ el }: { el: ImageElement | VideoElement }) {
+  const set = useUpdate(el);
+  return (
+    <>
+      <Row>
+        <Select label="Mask shape" value={el.mask} onChange={(mask) => set({ mask })} options={IMAGE_MASKS.map((m) => ({ value: m, label: m === "rect" ? "Rectangle" : title(m) }))} />
+        {el.mask === "rect" ? (
+          <NumberField label="Corner radius" prefix="◜" min={0} max={4000} value={el.cornerRadius} onChange={(cornerRadius) => set({ cornerRadius })} />
+        ) : (
+          <span />
+        )}
+      </Row>
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <NumberField label="Border width" prefix="▭" min={0} max={400} value={el.borderWidth} onChange={(borderWidth) => set({ borderWidth })} />
+        </div>
+        <IconButton label="Flip horizontal" active={el.flipX} onClick={() => set({ flipX: !el.flipX })}>
+          <FlipHorizontal2 />
+        </IconButton>
+        <IconButton label="Flip vertical" active={el.flipY} onClick={() => set({ flipY: !el.flipY })}>
+          <FlipVertical2 />
+        </IconButton>
+      </div>
+      {el.borderWidth > 0 && <ColorControl label="Border color" value={el.borderColor} onChange={(borderColor) => set({ borderColor }, "border")} />}
+    </>
+  );
+}
+
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+
+function VideoProps({ el }: { el: VideoElement }) {
+  const set = useUpdate(el);
+  const asset = useEditorStore((s) => s.project?.assets.find((a) => a.id === el.assetId));
+  const playback = useEditorStore((s) => s.playback);
+  const playhead = useEditorStore((s) => s.playhead);
+  const source = asset?.duration ?? el.trimEnd;
+  const trim = (start: number, end: number) => set(clampTrim(start, end, source));
+  const speeds = SPEEDS.includes(el.playbackRate) ? SPEEDS : [...SPEEDS, el.playbackRate].sort((a, b) => a - b);
+  return (
+    <>
+      <Section title="Video">
+        <p className="text-[11px] text-muted" data-testid="video-info">
+          {asset
+            ? `${VIDEO_LABEL[asset.mime as VideoMime] ?? asset.mime} · ${asset.width} × ${asset.height} · ${formatSeconds(source)} · plays ${formatSeconds(clipDuration(el))}`
+            : "The video file of this layer is missing on this device."}
+        </p>
+        <Row>
+          <NumberField label="Trim start" prefix="[" min={0} max={source} step={0.1} decimals={2} value={el.trimStart} onChange={(v) => trim(v, Math.max(el.trimEnd, v))} />
+          <NumberField label="Trim end" prefix="]" min={0} max={source} step={0.1} decimals={2} value={el.trimEnd} onChange={(v) => trim(Math.min(el.trimStart, v), v)} />
+        </Row>
+        <Row>
+          <Select label="Speed" value={String(el.playbackRate)} onChange={(v) => set({ playbackRate: Number(v) })} options={speeds.map((v) => ({ value: String(v), label: `${v}×` }))} />
+          <NumberField label="Poster time" prefix="▣" min={0} max={source} step={0.1} decimals={2} value={el.posterTime} onChange={(posterTime) => set({ posterTime })} />
+        </Row>
+        <Button size="sm" className="w-full" disabled={playback === "stopped"} onClick={() => set({ posterTime: Math.min(source, Number(videoTimeAt(el, playhead).toFixed(2))) })}>
+          Use current frame as poster
+        </Button>
+        <div>
+          <span className="text-[11px] text-muted">Volume</span>
+          <Slider label="Volume" min={0} max={1} step={0.01} value={el.volume} display={`${Math.round(el.volume * 100)}%`} onChange={(volume) => set({ volume }, "volume")} />
+        </div>
+        <div className="flex gap-4">
+          <Toggle label="Mute" checked={el.muted} onChange={(muted) => set({ muted })} />
+          <Toggle label="Loop" checked={el.loop} onChange={(loop) => set({ loop })} />
+        </div>
+        <p className="text-[11px] text-muted">The poster frame is what thumbnails and image exports show. Trim, speed and poster time are in seconds.</p>
+      </Section>
+      <Section title="Frame">
+        <FrameStyleControls el={el} />
+        <p className="text-[11px] text-muted">The video always fills its frame. Resize the frame from a side handle to crop.</p>
+      </Section>
+    </>
+  );
+}
+
 function ImageProps({ el }: { el: ImageElement }) {
   const set = useUpdate(el);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -283,26 +362,7 @@ function ImageProps({ el }: { el: ImageElement }) {
             {error}
           </p>
         )}
-        <Row>
-          <Select label="Mask shape" value={el.mask} onChange={(mask) => set({ mask })} options={IMAGE_MASKS.map((m) => ({ value: m, label: m === "rect" ? "Rectangle" : title(m) }))} />
-          {el.mask === "rect" ? (
-            <NumberField label="Corner radius" prefix="◜" min={0} max={4000} value={el.cornerRadius} onChange={(cornerRadius) => set({ cornerRadius })} />
-          ) : (
-            <span />
-          )}
-        </Row>
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            <NumberField label="Border width" prefix="▭" min={0} max={400} value={el.borderWidth} onChange={(borderWidth) => set({ borderWidth })} />
-          </div>
-          <IconButton label="Flip horizontal" active={el.flipX} onClick={() => set({ flipX: !el.flipX })}>
-            <FlipHorizontal2 />
-          </IconButton>
-          <IconButton label="Flip vertical" active={el.flipY} onClick={() => set({ flipY: !el.flipY })}>
-            <FlipVertical2 />
-          </IconButton>
-        </div>
-        {el.borderWidth > 0 && <ColorControl label="Border color" value={el.borderColor} onChange={(borderColor) => set({ borderColor }, "border")} />}
+        <FrameStyleControls el={el} />
         <p className="text-[11px] text-muted">The photo always fills its frame. Resize the frame from a side handle to crop.</p>
       </Section>
 
@@ -510,6 +570,7 @@ export function PropertiesPanel() {
       {single?.type === "text" && <TextProps key={single.id} el={single} />}
       {single?.type === "shape" && <ShapeProps el={single} />}
       {single?.type === "image" && <ImageProps key={single.id} el={single} />}
+      {single?.type === "video" && <VideoProps key={single.id} el={single} />}
       {(single?.type === "sticker" || single?.type === "overlay") && <ColorOnlyProps el={single} />}
       {single && <EffectsProps el={single} />}
     </div>

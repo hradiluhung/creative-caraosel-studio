@@ -10,6 +10,8 @@ import type { DesignElement, Project } from "@/document/schema";
 import type { BrandKit } from "@/persistence/db";
 
 export type SaveStatus = "saved" | "dirty" | "saving" | "error";
+/** stopped: videos show their poster frame. paused: they hold the frame at the playhead. */
+export type PlaybackState = "stopped" | "playing" | "paused";
 
 const HISTORY_LIMIT = 100;
 const COALESCE_WINDOW_MS = 800;
@@ -36,6 +38,15 @@ export interface EditorState {
   /** Brand kit attached to the open project (colors, fonts and logos offered in the panels). */
   brandKit: BrandKit | null;
   setBrandKit(kit: BrandKit | null): void;
+  /** Video preview of the active surface. Session state only: it is never part of the document. */
+  playback: PlaybackState;
+  /** Slide time in seconds (updated a few times per second while playing). */
+  playhead: number;
+  /** Something the device could not do during playback, shown next to the play button. */
+  playbackNotice: string | null;
+  setPlayback(state: PlaybackState, playhead?: number): void;
+  setPlayhead(seconds: number): void;
+  setPlaybackNotice(notice: string | null): void;
 
   open(project: Project): void;
   close(): void;
@@ -95,6 +106,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setBrandKit(kit) {
     set({ brandKit: kit });
   },
+  playback: "stopped",
+  playhead: 0,
+  playbackNotice: null,
+  setPlayback(state, playhead) {
+    set({ playback: state, playhead: state === "stopped" ? 0 : (playhead ?? get().playhead) });
+  },
+  setPlayhead(seconds) {
+    if (seconds !== get().playhead) set({ playhead: seconds });
+  },
+  setPlaybackNotice(notice) {
+    set({ playbackNotice: notice });
+  },
 
   open(project) {
     set({
@@ -108,11 +131,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       saveStatus: "saved",
       saveError: null,
       editingTextId: null,
+      playback: "stopped",
+      playhead: 0,
+      playbackNotice: null,
     });
   },
 
   close() {
-    set({ project: null, past: [], future: [], selection: [], editingTextId: null, lastCommit: null, brandKit: null });
+    set({ project: null, past: [], future: [], selection: [], editingTextId: null, lastCommit: null, brandKit: null, playback: "stopped", playhead: 0 });
   },
 
   commit(fn, opts) {
@@ -177,7 +203,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const s = get();
     if (!s.project || !getSurface(s.project, id)) return;
     const index = s.project.slides.findIndex((sl) => sl.id === id);
-    set({ activeSurfaceId: id, selection: [], editingTextId: null, focusSlideIndex: index >= 0 ? index : s.focusSlideIndex });
+    set({
+      activeSurfaceId: id,
+      selection: [],
+      editingTextId: null,
+      focusSlideIndex: index >= 0 ? index : s.focusSlideIndex,
+      // Playback belongs to one surface: leaving it stops it.
+      ...(id !== s.activeSurfaceId ? { playback: "stopped" as const, playhead: 0 } : {}),
+    });
   },
   setFocusSlide(index) {
     const p = get().project;

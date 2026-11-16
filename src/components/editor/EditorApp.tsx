@@ -4,18 +4,19 @@ import { Layers, Maximize, PaintBucket, Plus, SlidersHorizontal } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import { DocumentError } from "@/document/migrations";
 import { loadCustomFonts } from "@/persistence/customFonts";
-import { getAssetBlob, getBrandKit, loadProject } from "@/persistence/db";
+import { getAssetBlob, getAssetPoster, getBrandKit, loadProject } from "@/persistence/db";
 import { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/lib/useMediaQuery";
 import { Button, Sheet } from "../ui/primitives";
-import { importImages } from "./actions";
+import { importMedia } from "./actions";
 import { canvasApi } from "./canvasApi";
 import { CanvasStage } from "./CanvasStage";
 import { ExportDialog } from "./ExportDialog";
 import { BackgroundControls, InsertPanel } from "./InsertPanel";
 import { LayersPanel } from "./LayersPanel";
+import { PlaybackBar } from "./PlaybackBar";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { SlideNavigator } from "./SlideNavigator";
 import { SaveStatus, TopBar } from "./TopBar";
@@ -106,13 +107,14 @@ function Workspace({ images }: { images: ImageStore }) {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
         setDropActive(false);
-        void importImages(Array.from(e.dataTransfer.files)).then(setDropErrors);
+        void importMedia(Array.from(e.dataTransfer.files)).then(setDropErrors);
       }}
     >
       <CanvasStage images={images} />
+      <PlaybackBar />
       {dropActive && (
         <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent/10 text-sm font-medium">
-          Drop images to add them
+          Drop images or videos to add them
         </div>
       )}
       {dropErrors.length > 0 && (
@@ -234,7 +236,7 @@ function Workspace({ images }: { images: ImageStore }) {
 
 export default function EditorApp() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const images = useMemo(() => new ImageStore(getAssetBlob), []);
+  const images = useMemo(() => new ImageStore(getAssetBlob, getAssetPoster), []);
 
   useEffect(() => {
     let cancelled = false;

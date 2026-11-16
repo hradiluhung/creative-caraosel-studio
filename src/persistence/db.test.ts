@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createImage, createProject, createShape } from "@/document/factory";
+import { createImage, createProject, createShape, createVideo } from "@/document/factory";
 import { DocumentError } from "@/document/migrations";
 import * as ops from "@/document/operations";
 import { sniffImageType } from "./assets";
@@ -9,6 +9,7 @@ import {
   deleteProject,
   duplicateStoredProject,
   getAssetBlob,
+  getAssetPoster,
   listProjects,
   loadProject,
   putAsset,
@@ -84,6 +85,23 @@ describe("project persistence", () => {
     expect((await listProjects()).map((m) => m.id)).toEqual([b.id]);
     expect(await getAssetBlob("shared")).toBeDefined();
     expect(await getAssetBlob("solo")).toBeUndefined();
+  });
+
+  it("keeps a video's poster still next to the file, and removes both with the project", async () => {
+    const clip = { id: "clip", name: "clip.mp4", mime: "video/mp4", width: 1920, height: 1080, size: 3, duration: 4 };
+    await putAsset({ ...clip, blob: new Blob(["mp4"], { type: "video/mp4" }), poster: new Blob(["jpg"], { type: "image/jpeg" }), createdAt: "2026-11-16" });
+    await putAsset(stored("photo"));
+    expect((await getAssetBlob("clip"))?.type).toBe("video/mp4");
+    expect((await getAssetPoster("clip"))?.type).toBe("image/jpeg");
+    expect(await getAssetPoster("photo")).toBeUndefined();
+    expect(await getAssetPoster("nope")).toBeUndefined();
+    let p = ops.addAssetRef(make("Reel", "2026-01-01"), clip);
+    p = ops.addElements(p, p.slides[0].id, [createVideo(clip, place)]);
+    await saveProject(p, null);
+    expect((await loadProject(p.id))?.slides[0].elements[0]).toMatchObject({ type: "video", assetId: "clip", trimEnd: 4 });
+    await deleteProject(p.id);
+    expect(await getAssetBlob("clip")).toBeUndefined();
+    expect(await getAssetPoster("clip")).toBeUndefined();
   });
 
   it("refuses to load corrupted stored data", async () => {

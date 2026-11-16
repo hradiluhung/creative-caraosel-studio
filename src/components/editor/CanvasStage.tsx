@@ -6,9 +6,10 @@ import { flushSync } from "react-dom";
 import { fitToViewport, getSlideOffsets, getSurface } from "@/document/geometry";
 import { getElements, updateElements } from "@/document/operations";
 import type { DesignElement, TextElement } from "@/document/schema";
+import { surfaceDuration, videoElements } from "@/document/timing";
 import { ensureFontsLoaded, FONT_FALLBACK, resolveItalic, resolveWeight } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
-import { buildSurfaceContent, collectFonts, ELEMENT_NAME, measureTextHeight } from "@/render/scene";
+import { buildSurfaceContent, collectFonts, ELEMENT_NAME, measureTextHeight, refreshVideoFrames, type BuildOptions } from "@/render/scene";
 import { useEditorStore } from "@/store/editorStore";
 import { FloatingMenu, type MenuItem } from "../ui/primitives";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
@@ -38,7 +39,19 @@ interface Refs {
   transformer: Konva.Transformer;
 }
 
+/** How the editor canvas asks the scene builder to draw (see BuildOptions). */
+const EDITOR_BUILD: BuildOptions = { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true, progressive: true };
+/** The playback clock is reported to the UI this often; the canvas itself redraws every frame. */
+const PLAYHEAD_REPORT_S = 0.1;
+
 const store = () => useEditorStore.getState();
+/** Visible video clips of the active surface and how long the surface plays. */
+function activeClips() {
+  const s = store();
+  const surface = s.project && getSurface(s.project, s.activeSurfaceId);
+  const clips = surface ? videoElements(surface.elements).filter((el) => el.visible) : [];
+  return { surface, clips, duration: surface ? surfaceDuration(surface.elements, surface.duration) : 0 };
+}
 /** Breathing room around a fitted canvas. Phones get less so the canvas stays large. */
 const viewPadding = () => (window.matchMedia("(max-width: 767px)").matches ? 20 : 56);
 const snippet = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 40) || "Text";
@@ -70,11 +83,14 @@ export function CanvasStage({ images }: { images: ImageStore }) {
   const discardDragRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceTargetRef = useRef<string | null>(null);
+  /** Slide time of the video preview. The store only gets a throttled copy for the clock display. */
+  const playTimeRef = useRef(0);
 
   const project = useEditorStore((s) => s.project);
   const activeSurfaceId = useEditorStore((s) => s.activeSurfaceId);
   const selection = useEditorStore((s) => s.selection);
   const editingTextId = useEditorStore((s) => s.editingTextId);
+  const playback = useEditorStore((s) => s.playback);
 
   const [resourceTick, setResourceTick] = useState(0);
   const [view, setViewState] = useState<View>({ scale: 1, x: 0, y: 0 });
@@ -548,6 +564,22 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     canvasApi.focusSlide = focusSlide;
     canvasApi.zoomBy = (factor) => zoomAt({ x: stage.width() / 2, y: stage.height() / 2 }, stage.scaleX() * factor);
     canvasApi.zoomTo = (scale) => zoomAt({ x: stage.width() / 2, y: stage.height() / 2 }, scale);
+    canvasApi.togglePlayback = () => {
+      const s = store();
+      if (s.playback === "playing") return s.setPlayback("paused", playTimeRef.current);
+      const { clips, duration } = activeClips();
+      if (clips.length === 0 || duration <= 0) return;
+      if (s.playback === "stopped" || playTimeRef.current >= duration) playTimeRef.current = 0;
+      s.setPlaybackNotice(null);
+      images.videos.resetAudioBlock();
+      // Started right here, inside the tap, because browsers only allow sound from a user gesture.
+      images.videos.sync(clips, playTimeRef.current, true);
+      s.setPlayback("playing", playTimeRef.current);
+    };
+    canvasApi.stopPlayback = () => store().setPlayback("stopped");
+    const unsubscribeAudio = images.videos.subscribeAudioBlocked(() =>
+      store().setPlaybackNotice("This browser blocked the sound. Pause and press play again to hear it."),
+    );
 
     return () => {
       cancelLongPress();
@@ -561,6 +593,9 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       canvasApi.fit = canvasApi.focusSlide = canvasApi.zoomBy = canvasApi.zoomTo = () => {};
+      canvasApi.togglePlayback = canvasApi.stopPlayback = () => {};
+      unsubscribeAudio();
+      images.videos.stop();
       stage.destroy();
       refs.current = null;
     };
@@ -602,7 +637,15 @@ export function CanvasStage({ images }: { images: ImageStore }) {
         strokeScaleEnabled: false,
       }),
     );
-    const content = buildSurfaceContent(surface, images, { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true, progressive: true });
+    // Stopped: every video shows its poster frame, exactly like thumbnails and image exports.
+    const videoTime = playback === "stopped" ? undefined : playTimeRef.current;
+    const clips = videoElements(surface.elements).filter((el) => el.visible);
+    if (playback === "paused") {
+      // Nothing left to preview (the last clip was deleted or hidden): back to the idle state.
+      if (clips.length === 0) store().setPlayback("stopped");
+      else images.videos.sync(clips, playTimeRef.current, false);
+    }
+    const content = buildSurfaceContent(surface, images, { ...EDITOR_BUILD, videoTime });
     r.holder.add(content);
     if (editingTextId) content.findOne(`#${editingTextId}`)?.visible(false);
 
@@ -632,7 +675,43 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       }
     }
     r.stage.batchDraw();
-  }, [project, activeSurfaceId, editingTextId, resourceTick, images, syncTransformer, fit, focusSlide]);
+  }, [project, activeSurfaceId, editingTextId, resourceTick, images, syncTransformer, fit, focusSlide, playback]);
+
+  // --- Video preview ----------------------------------------------------------
+
+  useEffect(() => {
+    const r = refs.current;
+    if (!r) return;
+    if (playback === "stopped") {
+      playTimeRef.current = 0;
+      images.videos.stop();
+      return;
+    }
+    if (playback !== "playing") return;
+    const startedAt = performance.now();
+    const startTime = playTimeRef.current;
+    let reported = startTime;
+    // The wall clock is the master; each video is kept in step with it by VideoPool.sync.
+    const animation = new Konva.Animation(() => {
+      const { surface, clips, duration } = activeClips();
+      const time = startTime + (performance.now() - startedAt) / 1000;
+      if (!surface || clips.length === 0 || time >= duration) {
+        store().setPlayback("stopped");
+        return false;
+      }
+      playTimeRef.current = time;
+      if (Math.abs(time - reported) >= PLAYHEAD_REPORT_S) {
+        reported = time;
+        store().setPlayhead(time);
+      }
+      images.videos.sync(clips, time, true);
+      refreshVideoFrames(r.holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time });
+    }, r.contentLayer);
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, [playback, images]);
 
   useEffect(() => {
     syncTransformer();

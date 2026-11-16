@@ -4,7 +4,8 @@ A browser-based studio for designing Instagram carousels: independent slides or 
 panorama that is sliced on export. Works on desktop and phones, installable as a PWA, and keeps
 every project on the device (IndexedDB) so it opens offline.
 
-**Status: Phase 1 (foundation and basic editor) and Phase 2 (professional design features) are implemented and tested.**
+**Status: Phase 1 (foundation and basic editor) and Phase 2 (professional design features) are implemented and tested.
+Phase 3 (video) is in progress: video layers with preview playback work, MP4 export is not built yet (see [PHASE3_PLAN.md](./PHASE3_PLAN.md)).**
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design, the full feature status and known limitations.
 
 ## Run it
@@ -23,7 +24,7 @@ npm run start        # production build, service worker and offline shell active
 npm run typecheck
 npm run lint
 npm test             # unit tests: document model, geometry, migrations, persistence, naming
-npm run test:e2e     # real-browser workflow tests (tests/e2e.mjs, tests/e2e-phase2.mjs), see their headers
+npm run test:e2e     # real-browser workflow tests (tests/e2e*.mjs), see their headers
 ```
 
 ## Try it on an iPhone

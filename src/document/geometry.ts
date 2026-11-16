@@ -59,6 +59,8 @@ export interface Surface {
   height: number;
   background: Background;
   elements: DesignElement[];
+  /** Manual length in seconds (video slides). Unset: as long as the longest clip. */
+  duration?: number;
 }
 
 /** A rectangle of a surface that becomes one exported file. */
@@ -90,6 +92,7 @@ export function getSurfaces(project: Project): Surface[] {
     height: project.height,
     background: s.background,
     elements: s.elements,
+    duration: s.duration,
   }));
 }
 

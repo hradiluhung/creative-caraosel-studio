@@ -3,9 +3,10 @@
  * The blob loader is injected so rendering stays independent of persistence.
  */
 import { coverCrop } from "@/document/geometry";
-import { isNeutral, type Adjustments, type ImageElement } from "@/document/schema";
+import { isNeutral, type Adjustments, type ImageElement, type VideoElement } from "@/document/schema";
 import { applyAdjustments } from "./adjust";
 import type { AdjustRequest, AdjustResponse } from "./adjust.worker";
+import { VideoPool, type VideoFrameOptions } from "./videoPool";
 
 export type BlobLoader = (assetId: string) => Promise<Blob | undefined>;
 
@@ -30,6 +31,11 @@ export interface RenderResources {
    * Results are memoized, so redrawing an unchanged image costs nothing.
    */
   getProcessed(el: ImageElement, opts: ProcessOptions): HTMLCanvasElement | undefined;
+  /**
+   * The frame of a video element (poster frame, or the frame at a slide time), cropped to its
+   * box and flipped. Undefined while nothing can be drawn yet.
+   */
+  getVideoFrame(el: VideoElement, opts: VideoFrameOptions): HTMLCanvasElement | undefined;
 }
 
 const PROCESSED_CACHE_LIMIT = 48;
@@ -39,7 +45,17 @@ const PROXY_SIDE = 360;
 /** Wait for the slider to pause before starting a full-resolution pass. */
 const FULL_PASS_DELAY_MS = 140;
 
-type Entry = { status: "loading" | "ready" | "error"; image?: HTMLImageElement; url?: string; promise: Promise<void> };
+type Entry = {
+  status: "loading" | "ready" | "error";
+  kind: "image" | "video";
+  /** The decoded photo, or the stored poster still of a video. */
+  image?: HTMLImageElement;
+  /** Object URL of `image`. */
+  url?: string;
+  /** Object URL of the video file itself. */
+  videoUrl?: string;
+  promise: Promise<void>;
+};
 
 export class ImageStore implements RenderResources {
   private entries = new Map<string, Entry>();
@@ -53,7 +69,31 @@ export class ImageStore implements RenderResources {
   private jobId = 0;
   private waiting = new Map<number, (data: Uint8ClampedArray | null) => void>();
 
-  constructor(private loader: BlobLoader) {}
+  /** Playing videos, poster frames and per-element frame canvases. */
+  readonly videos: VideoPool;
+
+  /** posterLoader returns the small still stored next to a video asset (optional). */
+  constructor(
+    private loader: BlobLoader,
+    private posterLoader?: BlobLoader,
+  ) {
+    this.videos = new VideoPool(
+      (assetId) => {
+        const entry = this.entries.get(assetId);
+        if (!entry) void this.load(assetId);
+        return entry?.status === "ready" && entry.videoUrl ? { url: entry.videoUrl, poster: entry.image } : undefined;
+      },
+      () => this.listeners.forEach((l) => l()),
+    );
+  }
+
+  getVideoFrame(el: VideoElement, opts: VideoFrameOptions) {
+    return this.videos.frame(el, opts);
+  }
+
+  isVideo(assetId: string) {
+    return this.entries.get(assetId)?.kind === "video";
+  }
 
   getImage(assetId: string) {
     const entry = this.entries.get(assetId);
@@ -61,7 +101,7 @@ export class ImageStore implements RenderResources {
       void this.load(assetId);
       return undefined;
     }
-    return entry.status === "ready" ? entry.image : undefined;
+    return entry.status === "ready" && entry.kind === "image" ? entry.image : undefined;
   }
 
   getProcessed(el: ImageElement, opts: ProcessOptions) {
@@ -255,7 +295,7 @@ export class ImageStore implements RenderResources {
     };
   }
 
-  /** Object URL of a decoded asset, for plain <img> previews in panels. */
+  /** Object URL of a decoded image (for a video: of its stored still), for plain <img> previews in panels. */
   getUrl(assetId: string) {
     const entry = this.entries.get(assetId);
     if (!entry) void this.load(assetId);
@@ -269,21 +309,37 @@ export class ImageStore implements RenderResources {
   load(assetId: string): Promise<void> {
     const existing = this.entries.get(assetId);
     if (existing) return existing.promise;
-    const entry: Entry = { status: "loading", promise: Promise.resolve() };
-    entry.promise = (async () => {
+    const entry: Entry = { status: "loading", kind: "image", promise: Promise.resolve() };
+    const decode = async (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.decoding = "async";
       try {
-        const blob = await this.loader(assetId);
-        if (!blob) throw new Error("asset not found");
-        const url = URL.createObjectURL(blob);
-        const image = new Image();
-        image.decoding = "async";
         await new Promise<void>((resolve, reject) => {
           image.onload = () => resolve();
           image.onerror = () => reject(new Error("image decode failed"));
           image.src = url;
         });
-        entry.image = image;
-        entry.url = url;
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        throw e;
+      }
+      entry.image = image;
+      entry.url = url;
+    };
+    entry.promise = (async () => {
+      try {
+        const blob = await this.loader(assetId);
+        if (!blob) throw new Error("asset not found");
+        if (blob.type.startsWith("video/")) {
+          entry.kind = "video";
+          entry.videoUrl = URL.createObjectURL(blob);
+          // The stored still is only a quick preview: a video without one is still usable.
+          const poster = await this.posterLoader?.(assetId).catch(() => undefined);
+          if (poster) await decode(poster).catch(() => undefined);
+        } else {
+          await decode(blob);
+        }
         entry.status = "ready";
       } catch {
         entry.status = "error";
@@ -308,7 +364,11 @@ export class ImageStore implements RenderResources {
 
   /** Release object URLs. Call when the editor unmounts. */
   dispose() {
-    for (const e of this.entries.values()) if (e.url) URL.revokeObjectURL(e.url);
+    this.videos.dispose();
+    for (const e of this.entries.values()) {
+      if (e.url) URL.revokeObjectURL(e.url);
+      if (e.videoUrl) URL.revokeObjectURL(e.videoUrl);
+    }
     this.entries.clear();
     this.listeners.clear();
     for (const c of this.processed.values()) c.width = c.height = 0;

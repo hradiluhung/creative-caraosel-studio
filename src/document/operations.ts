@@ -166,7 +166,7 @@ export function addAssetRef(project: Project, asset: AssetRef): Project {
 export function usedAssetIds(project: Project): Set<string> {
   const ids = new Set<string>();
   const scan = (els: DesignElement[]) => {
-    for (const el of els) if (el.type === "image" && el.assetId) ids.add(el.assetId);
+    for (const el of els) if ((el.type === "image" || el.type === "video") && el.assetId) ids.add(el.assetId);
   };
   scan(project.panorama.elements);
   project.slides.forEach((s) => scan(s.elements));
@@ -190,6 +190,14 @@ export function cloneProject(project: Project, name: string, now = new Date()): 
 /** Number of photo placeholders that still have no image. */
 export function countPlaceholders(project: Project): number {
   const count = (els: DesignElement[]) => els.filter((el) => el.type === "image" && !el.assetId).length;
+  return project.mode === "seamless"
+    ? count(project.panorama.elements)
+    : project.slides.reduce((n, s) => n + count(s.elements), 0);
+}
+
+/** Number of video layers that end up in an export. */
+export function countVideos(project: Project): number {
+  const count = (els: DesignElement[]) => els.filter((el) => el.type === "video" && el.visible).length;
   return project.mode === "seamless"
     ? count(project.panorama.elements)
     : project.slides.reduce((n, s) => n + count(s.elements), 0);

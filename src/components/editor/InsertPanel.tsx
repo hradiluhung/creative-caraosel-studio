@@ -1,19 +1,21 @@
 "use client";
 
-import { ArrowRight, Circle, Hexagon, ImagePlus, Minus, Square, Star, Triangle, X } from "lucide-react";
+import { ArrowRight, Circle, Film, Hexagon, ImagePlus, Minus, Square, Star, Triangle, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SHAPE_LABELS } from "@/document/factory";
 import { getSurface } from "@/document/geometry";
 import { addAssetRef, setBackground } from "@/document/operations";
-import type { AssetRef, Background, OverlayKind, ShapeKind } from "@/document/schema";
+import { isVideoAsset, type AssetRef, type Background, type OverlayKind, type ShapeKind } from "@/document/schema";
+import { formatSeconds } from "@/document/timing";
 import { getAssetBlob, listBrandKits, type BrandKit } from "@/persistence/db";
 import { STICKERS, type StickerDef } from "@/render/stickers";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
+import { VIDEO_ACCEPT_ATTR } from "@/persistence/video";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { Button, ColorField, IconButton, Label, NumberField, Segmented, Select } from "../ui/primitives";
-import { importImages, insertAsset, insertOverlay, insertShape, insertSticker, insertStyledText, insertText } from "./actions";
+import { importImages, importVideos, insertAsset, insertOverlay, insertShape, insertSticker, insertStyledText, insertText } from "./actions";
 import { ColorControl } from "./ColorControl";
 
 const SHAPES: Array<{ kind: ShapeKind; icon: ReactNode }> = [
@@ -241,8 +243,21 @@ export function InsertPanel({ images }: { images: ImageStore }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const videoRef = useRef<HTMLInputElement>(null);
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [videoErrors, setVideoErrors] = useState<string[]>([]);
   const [, setTick] = useState(0);
   useEffect(() => images.subscribe(() => setTick((t) => t + 1)), [images]);
+  const photoAssets = assets?.filter((a) => !isVideoAsset(a)) ?? [];
+  const videoAssets = assets?.filter(isVideoAsset) ?? [];
+
+  const onVideos = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setVideoBusy(true);
+    setVideoErrors(await importVideos(Array.from(files)));
+    setVideoBusy(false);
+    if (videoRef.current) videoRef.current.value = "";
+  };
 
   const onFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -306,9 +321,9 @@ export function InsertPanel({ images }: { images: ImageStore }) {
             ))}
           </ul>
         )}
-        {assets && assets.length > 0 && (
+        {photoAssets.length > 0 && (
           <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
-            {assets.map((asset) => {
+            {photoAssets.map((asset) => {
               const url = images.getUrl(asset.id);
               return (
                 <button
@@ -324,6 +339,50 @@ export function InsertPanel({ images }: { images: ImageStore }) {
                     <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
                   ) : (
                     <span className="text-[10px] text-muted">{images.isMissing(asset.id) ? "Missing" : "…"}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Videos">
+        <input ref={videoRef} type="file" accept={VIDEO_ACCEPT_ATTR} multiple hidden data-testid="video-input" onChange={(e) => void onVideos(e.target.files)} />
+        <Button className="w-full" disabled={videoBusy} onClick={() => videoRef.current?.click()}>
+          <Film className="h-4 w-4" /> {videoBusy ? "Importing…" : "Upload videos"}
+        </Button>
+        <p className="text-[11px] text-muted">MP4, MOV or WebM, as far as this browser can play them. Video slides still export as a still image for now.</p>
+        {videoErrors.length > 0 && (
+          <ul role="alert" className="space-y-1 text-xs text-danger">
+            {videoErrors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        )}
+        {videoAssets.length > 0 && (
+          <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
+            {videoAssets.map((asset) => {
+              const url = images.getUrl(asset.id);
+              return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  title={`Add ${asset.name}`}
+                  aria-label={`Add video ${asset.name}`}
+                  onClick={() => insertAsset(asset)}
+                  className="relative flex aspect-square items-center justify-center overflow-hidden rounded-[4px] border border-line bg-sunken hover:border-ink"
+                >
+                  {url ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- local blob preview
+                    <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
+                  ) : images.isMissing(asset.id) ? (
+                    <span className="text-[10px] text-muted">Missing</span>
+                  ) : (
+                    <Film className="h-4 w-4 text-muted" />
+                  )}
+                  {asset.duration !== undefined && (
+                    <span className="absolute right-0.5 bottom-0.5 rounded-[3px] bg-black/65 px-1 text-[9px] leading-4 text-white tabular-nums">{formatSeconds(asset.duration)}</span>
                   )}
                 </button>
               );

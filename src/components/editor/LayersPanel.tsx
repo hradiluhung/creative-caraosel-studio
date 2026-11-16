@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Eye, EyeOff, Image as ImageIcon, Layers2, Lock, Shapes, Sticker, Type, Unlock } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Film, Image as ImageIcon, Layers2, Lock, Shapes, Sticker, Type, Unlock } from "lucide-react";
 import { useState } from "react";
 import { getElements, moveElementToIndex, updateElements } from "@/document/operations";
 import type { DesignElement } from "@/document/schema";
@@ -8,7 +8,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
 import { IconButton } from "../ui/primitives";
 
-const ICONS = { text: Type, image: ImageIcon, shape: Shapes, sticker: Sticker, overlay: Layers2 } as const;
+const ICONS = { text: Type, image: ImageIcon, shape: Shapes, sticker: Sticker, overlay: Layers2, video: Film } as const;
 
 function LayerRow({ el, index, count }: { el: DesignElement; index: number; count: number }) {
   const selected = useEditorStore((s) => s.selection.includes(el.id));
@@ -117,7 +117,7 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
 export function LayersPanel() {
   const elements = useEditorStore((s) => (s.project ? getElements(s.project, s.activeSurfaceId) : undefined));
   if (!elements || elements.length === 0) {
-    return <p className="px-3.5 py-4 text-xs text-muted">No layers yet. Add text, a shape or an image.</p>;
+    return <p className="px-3.5 py-4 text-xs text-muted">No layers yet. Add text, a shape, an image or a video.</p>;
   }
   // Top-most layer first, like every design tool.
   const rows = elements.map((el, index) => ({ el, index })).reverse();

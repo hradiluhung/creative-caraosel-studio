@@ -16,6 +16,7 @@ import type {
   ShapeElement,
   StickerElement,
   TextElement,
+  VideoElement,
 } from "@/document/schema";
 import { mulberry32 } from "./adjust";
 import { FONT_FALLBACK, resolveItalic, resolveWeight, type FontFaceRequest } from "./fonts";
@@ -26,6 +27,8 @@ import { getSticker } from "./stickers";
 
 export const ELEMENT_NAME = "element";
 export const BACKGROUND_NAME = "background";
+/** Shapes whose fill is a video frame (found again by refreshVideoFrames while playing). */
+export const VIDEO_FRAME_NAME = "video-frame";
 
 export interface BuildOptions {
   /** Editor canvases are interactive, exports and thumbnails are not. */
@@ -38,6 +41,11 @@ export interface BuildOptions {
   showPlaceholders: boolean;
   /** Editor only: quick previews first, sharp adjusted images from a worker (see ImageStore). */
   progressive?: boolean;
+  /**
+   * Slide time in seconds whose video frames should be drawn (editor playback, video export).
+   * Undefined draws every video's poster frame: thumbnails, image exports, the idle editor.
+   */
+  videoTime?: number;
 }
 
 // --- Text -------------------------------------------------------------------
@@ -140,31 +148,69 @@ export function traceMask(ctx: Konva.Context | CanvasRenderingContext2D, mask: I
   ctx.closePath();
 }
 
+type Framed = Pick<ImageElement, "width" | "height" | "mask" | "cornerRadius" | "borderWidth" | "borderColor">;
+
+/** The mask outline of a photo or video frame as a shape that can be filled and stroked. */
+function maskOutline(el: Framed, config: Konva.ShapeConfig): Konva.Shape {
+  return new Konva.Shape({
+    width: el.width,
+    height: el.height,
+    sceneFunc: (ctx, shape) => {
+      traceMask(ctx, el.mask, el.width, el.height, el.cornerRadius);
+      ctx.fillStrokeShape(shape);
+    },
+    ...config,
+  });
+}
+
+/** Pattern-fill attributes that stretch a pre-cropped bitmap over the whole frame. */
+function frameFill(el: Framed, bitmap: HTMLCanvasElement): Konva.ShapeConfig {
+  return {
+    fillPatternImage: bitmap as unknown as HTMLImageElement,
+    fillPatternRepeat: "no-repeat",
+    fillPatternScaleX: el.width / bitmap.width,
+    fillPatternScaleY: el.height / bitmap.height,
+  };
+}
+
+const frameBorder = (el: Framed): Konva.ShapeConfig => ({
+  stroke: el.borderWidth > 0 ? el.borderColor : undefined,
+  strokeWidth: el.borderWidth,
+  lineJoin: "round",
+});
+
+function videoFrameOptions(opts: BuildOptions) {
+  return { quality: opts.quality, maxSide: opts.maxImageSide, time: opts.videoTime };
+}
+
+function videoNodes(el: VideoElement, res: RenderResources, opts: BuildOptions): Konva.Shape[] {
+  const frame = res.getVideoFrame(el, videoFrameOptions(opts));
+  // Same construction as photos: the frame is the pattern fill of the mask outline, so border
+  // and shadow follow any mask shape. Without a frame yet (still decoding) it is a neutral box.
+  return [maskOutline(el, { name: VIDEO_FRAME_NAME, ...(frame ? frameFill(el, frame) : { fill: "#dcdad5" }), ...frameBorder(el) })];
+}
+
+/**
+ * Put the current video frames into an already built surface without rebuilding it.
+ * The editor calls this once per animation frame while a slide is playing.
+ */
+export function refreshVideoFrames(root: Konva.Container, elements: DesignElement[], res: RenderResources, opts: BuildOptions) {
+  const byId = new Map(elements.map((el) => [el.id, el]));
+  for (const node of root.find<Konva.Shape>(`.${VIDEO_FRAME_NAME}`)) {
+    const el = byId.get(node.getParent()?.id() ?? "");
+    if (el?.type !== "video") continue;
+    const frame = res.getVideoFrame(el, videoFrameOptions(opts));
+    // Setting the attributes again, even to the same canvas, makes Konva rebuild the pattern.
+    if (frame) node.setAttrs({ fill: undefined, ...frameFill(el, frame) });
+  }
+}
+
 function imageNodes(el: ImageElement, res: RenderResources, opts: BuildOptions): Konva.Shape[] {
-  const outline = (config: Konva.ShapeConfig) =>
-    new Konva.Shape({
-      width: el.width,
-      height: el.height,
-      sceneFunc: (ctx, shape) => {
-        traceMask(ctx, el.mask, el.width, el.height, el.cornerRadius);
-        ctx.fillStrokeShape(shape);
-      },
-      ...config,
-    });
+  const outline = (config: Konva.ShapeConfig) => maskOutline(el, config);
   const bitmap = el.assetId ? res.getProcessed(el, { quality: opts.quality, maxSide: opts.maxImageSide, progressive: opts.progressive }) : undefined;
   if (bitmap) {
     // The processed bitmap is used as a pattern fill, so border and shadow follow any mask shape.
-    return [
-      outline({
-        fillPatternImage: bitmap as unknown as HTMLImageElement,
-        fillPatternRepeat: "no-repeat",
-        fillPatternScaleX: el.width / bitmap.width,
-        fillPatternScaleY: el.height / bitmap.height,
-        stroke: el.borderWidth > 0 ? el.borderColor : undefined,
-        strokeWidth: el.borderWidth,
-        lineJoin: "round",
-      }),
-    ];
+    return [outline({ ...frameFill(el, bitmap), ...frameBorder(el) })];
   }
   if (!el.assetId && !opts.showPlaceholders) return [];
   // Empty frame (placeholder), or an image that is still decoding or missing.
@@ -333,6 +379,9 @@ export function buildElementNode(el: DesignElement, res: RenderResources, opts: 
     }
   } else if (el.type === "image") {
     nodes = imageNodes(el, res, opts);
+    caster = nodes[0];
+  } else if (el.type === "video") {
+    nodes = videoNodes(el, res, opts);
     caster = nodes[0];
   } else if (el.type === "shape") {
     nodes = [shapeNode(el)];

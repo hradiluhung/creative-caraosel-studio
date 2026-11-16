@@ -47,6 +47,9 @@ const MIGRATIONS: Record<number, Migration> = {
       schemaVersion: 2,
     };
   },
+  // Version 3 (Phase 3): video elements, optional Slide.duration and AssetRef.duration.
+  // Everything new is either a new element type or optional, so old documents only change version.
+  2: (doc) => ({ ...doc, schemaVersion: 3 }),
 };
 
 export class DocumentError extends Error {

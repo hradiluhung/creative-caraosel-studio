@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const finite = z.number().refine(Number.isFinite, "must be finite");
 const hexColor = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "expected #RRGGBB or #RRGGBBAA");
@@ -102,6 +102,37 @@ export const imageElementSchema = z.object({
   borderWidth: z.number().min(0),
 });
 
+export const PLAYBACK_RATE_MIN = 0.25;
+export const PLAYBACK_RATE_MAX = 4;
+
+/**
+ * A video clip in a frame. It shares the frame styling of images (mask, corner radius, flips,
+ * border); all times are seconds inside the source file.
+ */
+export const videoElementSchema = z
+  .object({
+    ...baseElement,
+    type: z.literal("video"),
+    assetId: z.string().min(1),
+    /** First and last moment of the source that are played. trimEnd is always after trimStart. */
+    trimStart: z.number().min(0),
+    trimEnd: z.number().positive(),
+    volume: z.number().min(0).max(1),
+    muted: z.boolean(),
+    playbackRate: z.number().min(PLAYBACK_RATE_MIN).max(PLAYBACK_RATE_MAX),
+    /** Repeat the trimmed range while the slide is longer than the clip. */
+    loop: z.boolean(),
+    /** Source time of the frame shown in thumbnails and image exports. */
+    posterTime: z.number().min(0),
+    flipX: z.boolean(),
+    flipY: z.boolean(),
+    cornerRadius: z.number().min(0),
+    mask: imageMaskSchema,
+    borderColor: hexColor,
+    borderWidth: z.number().min(0),
+  })
+  .refine((el) => el.trimEnd > el.trimStart, { message: "trimEnd must be after trimStart", path: ["trimEnd"] });
+
 export const textAlignSchema = z.enum(["left", "center", "right"]);
 
 export const textElementSchema = z.object({
@@ -159,6 +190,7 @@ export const elementSchema = z.discriminatedUnion("type", [
   shapeElementSchema,
   stickerElementSchema,
   overlayElementSchema,
+  videoElementSchema,
 ]);
 
 /**
@@ -173,11 +205,16 @@ const elementList = z.array(elementSchema).superRefine((els, ctx) => {
   }
 });
 
+/** Upper bound for a manually set slide duration. */
+export const MAX_SLIDE_SECONDS = 600;
+
 export const slideSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   background: backgroundSchema,
   elements: elementList,
+  /** Seconds. Unset means "as long as the longest video clip on the slide". */
+  duration: z.number().positive().max(MAX_SLIDE_SECONDS).optional(),
 });
 
 export const assetRefSchema = z.object({
@@ -187,6 +224,8 @@ export const assetRefSchema = z.object({
   width: z.number().positive(),
   height: z.number().positive(),
   size: z.number().nonnegative(),
+  /** Seconds, only present on video assets. */
+  duration: z.number().positive().optional(),
 });
 
 export const projectSchema = z.object({
@@ -217,6 +256,7 @@ export type TextElement = z.infer<typeof textElementSchema>;
 export type ShapeElement = z.infer<typeof shapeElementSchema>;
 export type StickerElement = z.infer<typeof stickerElementSchema>;
 export type OverlayElement = z.infer<typeof overlayElementSchema>;
+export type VideoElement = z.infer<typeof videoElementSchema>;
 export type OverlayKind = OverlayElement["overlay"];
 export type Adjustments = z.infer<typeof adjustmentsSchema>;
 export type ImageMask = z.infer<typeof imageMaskSchema>;
@@ -250,4 +290,8 @@ export const NEUTRAL_ADJUSTMENTS: Adjustments = {
 
 export function isNeutral(a: Adjustments): boolean {
   return (Object.keys(NEUTRAL_ADJUSTMENTS) as Array<keyof Adjustments>).every((k) => a[k] === 0);
+}
+
+export function isVideoAsset(asset: Pick<AssetRef, "mime">): boolean {
+  return asset.mime.startsWith("video/");
 }

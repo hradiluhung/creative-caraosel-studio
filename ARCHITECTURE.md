@@ -37,10 +37,11 @@ Rules that keep this maintainable:
 ```
 src/
   app/                    routes: / (dashboard), /editor?id=…, manifest, global styles, font faces
-  document/               schema.ts  geometry.ts  factory.ts  operations.ts  migrations.ts  ids.ts
+  document/               schema.ts  geometry.ts  factory.ts  operations.ts  migrations.ts  ids.ts  timing.ts (video time model)
   render/                 scene.ts (Konva scene builder)  resources.ts (image cache)  fonts.ts  shapes.ts
+                          videoPool.ts (playing videos, poster frames)  videoDom.ts
   export/                 exporter.ts (render, verify, zip, download)  naming.ts
-  persistence/            db.ts (IndexedDB)  assets.ts (import + validation)
+  persistence/            db.ts (IndexedDB)  assets.ts (import + validation)  video.ts  videoSniff.ts
   store/                  editorStore.ts
   components/
     ui/                   small design-system primitives (button, fields, dialog, sheet, menu)
@@ -48,7 +49,7 @@ src/
     editor/               EditorApp (desktop + phone shells), CanvasStage, panels, hooks, actions
   lib/                    tiny React helpers
 public/                   sw.js, icons
-tests/e2e.mjs             real-browser workflow test
+tests/e2e*.mjs            real-browser workflow tests (one file per phase)
 ```
 
 ## 4. Document schema (version 1)
@@ -164,7 +165,7 @@ IndexedDB database `creative-carousel-studio` (via `idb`):
 
 Not used yet, on purpose: **shadcn/ui** (the handful of primitives needed are in
 `src/components/ui`; shadcn components can replace them later without touching the editor),
-**react-konva** (see section 5), **Supabase**, **FFmpeg.wasm / WebCodecs** (Phase 3).
+**react-konva** (see section 5), **Supabase**, **FFmpeg.wasm / WebCodecs** (Phase 3, video export).
 
 ## 9. Phase 1 checklist
 
@@ -251,8 +252,53 @@ stickers, overlays, text effects, custom font upload surviving a reload, a rejec
 brand kit with custom font and logo, template preview and use, filling a placeholder, and saving a
 project as a template.
 
-## 12. Known limitations (honest list)
+## 12. Phase 3: video (in progress)
 
+`PHASE3_PLAN.md` is the working plan and progress log. Done so far: **C1, video as an element.**
+Timeline, MP4 export and audio tracks are not built yet.
+
+Schema version 3 (migration `2 -> 3` only bumps the version):
+
+- New element type `video`: `assetId`, `trimStart`, `trimEnd`, `volume`, `muted`, `playbackRate`,
+  `loop`, `posterTime`, plus the frame styling images have (`mask`, `cornerRadius`, flips, border).
+- `Slide.duration` (seconds, optional) and `AssetRef.duration` (video assets).
+
+Decisions:
+
+- **One time model, in `src/document/timing.ts`.** `videoTimeAt(element, slideTime)` says which source
+  frame belongs to a moment of the slide (trim, speed, loop, hold on the last frame). The preview uses
+  it now; the timeline and the exporter must use the same function.
+- **Video goes through the same scene builder as everything else.** `ImageStore.videos` (a `VideoPool`)
+  hands the scene builder a canvas with the element's current frame, already cropped to its box and
+  flipped, exactly the shape `getProcessed` returns for photos. `scene.ts` uses it as the pattern fill
+  of the mask outline, so masks, borders, shadows and blend modes work on video with no extra code.
+  `BuildOptions.videoTime` selects the frame: undefined is the poster frame (thumbnails, image exports,
+  the idle editor), a number is a slide time (playback now, video export later).
+- **Poster frames are exact.** The frame at `posterTime` is captured by seeking a temporary `<video>`
+  and cached; the small JPEG stored with the asset is only the instant fallback while that happens.
+  Image exports wait for the exact frame and stop with a clear error if it cannot be read.
+- **The wall clock is the master during playback.** A `Konva.Animation` computes the slide time, asks
+  `VideoPool.sync` to keep each `<video>` in step (it only seeks when a video drifts or loops) and
+  repaints the video nodes in place, without rebuilding the scene. Playback state is session state in
+  the store; it never touches the document.
+- **Playback starts inside the tap** (`canvasApi.togglePlayback`), because browsers only allow sound
+  from a user gesture. If sound is refused anyway, the clip plays muted and the UI says so.
+- **Import is validated like images:** file signature (not extension), `canPlayType`, a real decode to
+  read size and duration, size and length limits, and a storage estimate check before writing.
+- Live `<video>` elements exist only while a slide is playing or paused and are released on stop,
+  because phones allow only a few video decoders at a time.
+
+Verification: 74 unit tests in total; `tests/e2e-phase3.mjs` (43 checks in Chrome) covers import,
+poster frames in editor and export pixels, playback, pause, trim, properties, mask, crop, flip, reload
+and undo.
+
+## 13. Known limitations (honest list)
+
+- **Video (Phase 3, C1 only):** verified in desktop Chrome and an emulated phone viewport, not on a real
+  iPhone. Video slides export as still images (poster frame); there is no MP4 export, no timeline, no
+  per-clip start offset, no UI for a manual slide duration, no filters on video and no audio tracks yet.
+  Which codecs can be imported depends on the browser (for example HEVC MOV files play in Safari, not
+  in every other browser); the import says so instead of failing silently.
 - **Phase 2 was verified in desktop Chrome only.** Phase 1 has been used on an iPhone; the Phase 2
   panels, the iOS Files picker for fonts and filter speed on a phone still need a device pass.
 - Adjustment sliders use a quick low-resolution preview while moving; the photo sharpens a moment
@@ -277,4 +323,4 @@ project as a template.
 - Images are decoded at full resolution; preview proxies and Web Worker decoding are not in yet,
   so many very large photos in one project will be heavy on phones.
 - SVG import is not enabled (it needs sanitising first).
-- Video, AI features, cloud sync: later phases, nothing stubbed in the UI.
+- AI features, cloud sync: later phases, nothing stubbed in the UI.

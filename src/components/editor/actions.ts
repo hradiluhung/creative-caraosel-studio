@@ -1,12 +1,14 @@
 /** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
-import { createImage, createOverlay, createShape, createSticker, createText, placementFor, type Placement, type TextPreset } from "@/document/factory";
+import { createImage, createOverlay, createShape, createSticker, createText, createVideo, placementFor, type Placement, type TextPreset } from "@/document/factory";
 import { getSurface, rotatedBounds } from "@/document/geometry";
 import { addAssetRef, addElements, updateElements } from "@/document/operations";
-import type { AssetRef, DesignElement, OverlayKind, ShapeKind, TextElement } from "@/document/schema";
+import { isVideoAsset, type AssetRef, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
 import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
 import type { StickerDef } from "@/render/stickers";
-import { importImageFile } from "@/persistence/assets";
+import { importImageFile, sniffImageType } from "@/persistence/assets";
+import { importVideoFile } from "@/persistence/video";
+import { sniffVideoType } from "@/persistence/videoSniff";
 import { useEditorStore } from "@/store/editorStore";
 
 const store = () => useEditorStore.getState();
@@ -64,19 +66,21 @@ export function insertShape(shape: ShapeKind) {
   if (p) store().addElement(createShape(shape, p));
 }
 
+const elementFor = (asset: AssetRef, p: Placement) => (isVideoAsset(asset) ? createVideo(asset, p) : createImage(asset, p));
+
 export function insertAsset(asset: AssetRef) {
   const p = currentPlacement();
-  if (p) store().addElement(createImage(asset, p));
+  if (p) store().addElement(elementFor(asset, p));
 }
 
-/** Import files, register them in the project and place them on the canvas. Returns error messages. */
-export async function importImages(files: Iterable<File>): Promise<string[]> {
+/** Import files with the given importer, register them in the project and place them on the canvas. */
+async function importWith(files: Iterable<File>, importer: (file: File) => Promise<AssetRef>): Promise<string[]> {
   const errors: string[] = [];
   const added: DesignElement[] = [];
   const refs: AssetRef[] = [];
   for (const file of files) {
     try {
-      refs.push(await importImageFile(file));
+      refs.push(await importer(file));
     } catch (e) {
       errors.push(e instanceof Error ? e.message : `Could not import "${file.name}".`);
     }
@@ -85,13 +89,32 @@ export async function importImages(files: Iterable<File>): Promise<string[]> {
   const s = store();
   if (refs.length === 0 || !placement) return errors;
   refs.forEach((ref, i) => {
-    const el = createImage(ref, placement);
+    const el = elementFor(ref, placement);
     added.push({ ...el, x: el.x + i * 32, y: el.y + i * 32 });
   });
   // One undo step for the whole import.
   s.commit((p) => addElements(refs.reduce(addAssetRef, p), s.activeSurfaceId, added));
   s.select(added.map((e) => e.id));
   return errors;
+}
+
+/** Returns error messages (empty when everything was imported). */
+export function importImages(files: Iterable<File>): Promise<string[]> {
+  return importWith(files, importImageFile);
+}
+
+export function importVideos(files: Iterable<File>): Promise<string[]> {
+  return importWith(files, importVideoFile);
+}
+
+/** Files dropped on the canvas: each one is routed by its real signature, never by its extension. */
+export function importMedia(files: Iterable<File>): Promise<string[]> {
+  return importWith(files, async (file) => {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (sniffImageType(head)) return importImageFile(file);
+    if (sniffVideoType(head)) return importVideoFile(file);
+    throw new Error(`"${file.name}" is not a supported image (JPG, PNG, WebP) or video (MP4, MOV, WebM).`);
+  });
 }
 
 export type AlignEdge = "left" | "center" | "right" | "top" | "middle" | "bottom";
