@@ -1,0 +1,86 @@
+/** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
+import { createImage, createShape, createText, placementFor, type Placement, type TextPreset } from "@/document/factory";
+import { getSurface, rotatedBounds } from "@/document/geometry";
+import { addAssetRef, addElements, updateElements } from "@/document/operations";
+import type { AssetRef, DesignElement, ShapeKind } from "@/document/schema";
+import { importImageFile } from "@/persistence/assets";
+import { useEditorStore } from "@/store/editorStore";
+
+const store = () => useEditorStore.getState();
+
+/** Where new elements land: the slide the user is looking at. */
+export function currentPlacement(): Placement | null {
+  const s = store();
+  const surface = s.project && getSurface(s.project, s.activeSurfaceId);
+  if (!s.project || !surface) return null;
+  const offset = s.project.mode === "seamless" ? s.focusSlideIndex * s.project.width : 0;
+  return placementFor(surface, s.project.width, offset);
+}
+
+export function insertText(preset: TextPreset) {
+  const p = currentPlacement();
+  if (p) store().addElement(createText(preset, p));
+}
+
+export function insertShape(shape: ShapeKind) {
+  const p = currentPlacement();
+  if (p) store().addElement(createShape(shape, p));
+}
+
+export function insertAsset(asset: AssetRef) {
+  const p = currentPlacement();
+  if (p) store().addElement(createImage(asset, p));
+}
+
+/** Import files, register them in the project and place them on the canvas. Returns error messages. */
+export async function importImages(files: Iterable<File>): Promise<string[]> {
+  const errors: string[] = [];
+  const added: DesignElement[] = [];
+  const refs: AssetRef[] = [];
+  for (const file of files) {
+    try {
+      refs.push(await importImageFile(file));
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : `Could not import "${file.name}".`);
+    }
+  }
+  const placement = currentPlacement();
+  const s = store();
+  if (refs.length === 0 || !placement) return errors;
+  refs.forEach((ref, i) => {
+    const el = createImage(ref, placement);
+    added.push({ ...el, x: el.x + i * 32, y: el.y + i * 32 });
+  });
+  // One undo step for the whole import.
+  s.commit((p) => addElements(refs.reduce(addAssetRef, p), s.activeSurfaceId, added));
+  s.select(added.map((e) => e.id));
+  return errors;
+}
+
+export type AlignEdge = "left" | "center" | "right" | "top" | "middle" | "bottom";
+
+/** Align the selected elements to the slide they sit on (their visual, rotated bounds). */
+export function alignSelected(edge: AlignEdge) {
+  const s = store();
+  const project = s.project;
+  const surface = project && getSurface(project, s.activeSurfaceId);
+  if (!project || !surface) return;
+  s.commit((p) => {
+    let next = p;
+    for (const el of surface.elements) {
+      if (!s.selection.includes(el.id) || el.locked) continue;
+      const b = rotatedBounds(el);
+      const slideIndex =
+        project.mode === "seamless"
+          ? Math.max(0, Math.min(project.slides.length - 1, Math.floor((b.x + b.width / 2) / project.width)))
+          : 0;
+      const left = slideIndex * project.width;
+      const dx =
+        edge === "left" ? left - b.x : edge === "center" ? left + project.width / 2 - (b.x + b.width / 2) : edge === "right" ? left + project.width - (b.x + b.width) : 0;
+      const dy =
+        edge === "top" ? -b.y : edge === "middle" ? surface.height / 2 - (b.y + b.height / 2) : edge === "bottom" ? surface.height - (b.y + b.height) : 0;
+      next = updateElements(next, s.activeSurfaceId, [el.id], { x: Math.round(el.x + dx), y: Math.round(el.y + dy) });
+    }
+    return next;
+  });
+}
