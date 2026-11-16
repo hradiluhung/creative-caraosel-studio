@@ -1,17 +1,20 @@
 /**
- * Image export. Renders each export frame through the same scene builder the
- * editor uses (src/render/scene.ts), at the document's native pixel size.
+ * Export. Renders each export frame through the same scene builder the editor uses
+ * (src/render/scene.ts). Still slides become images at the document's native pixel size;
+ * video slides become one video file each (src/export/video.ts). Slides are never merged
+ * into one video: the result is always one file per slide, in slide order.
  */
 import JSZip from "jszip";
 import Konva from "konva";
 import { getExportFrames, getSurface, type ExportFrame } from "@/document/geometry";
 import { usedAssetIds } from "@/document/operations";
 import type { Project } from "@/document/schema";
-import { videoElements } from "@/document/timing";
+import { frameDuration, videoElements } from "@/document/timing";
 import { ensureFontsLoaded } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
 import { buildSurfaceContent, collectFonts } from "@/render/scene";
-import { FORMAT_INFO, slideFileName, type ImageFormat } from "./naming";
+import { FORMAT_INFO, slideFileName, slideFileNameWithExt, type ImageFormat } from "./naming";
+import type { AudioCodec, VideoQuality, VideoResolution } from "./videoSupport";
 
 /** Conservative canvas area limit (iOS Safari refuses larger canvases). */
 export const MAX_CANVAS_AREA = 16_777_216;
@@ -79,8 +82,14 @@ export interface ExportOptions {
   scale: number;
   /** Slide indices to export, in any order. Output is always in slide order. */
   slideIndices: number[];
+  /**
+   * How slides that contain video are exported. Left out (or mode "still"): as an image of
+   * the poster frames, like any other slide.
+   */
+  video?: { mode: "video" | "still"; resolution: VideoResolution; quality: VideoQuality; audio: AudioCodec | null };
   signal?: AbortSignal;
-  onProgress?: (done: number, total: number) => void;
+  /** done / total count slides; detail describes the work inside the current slide. */
+  onProgress?: (done: number, total: number, detail?: string) => void;
 }
 
 export interface ExportedFile {
@@ -88,6 +97,12 @@ export interface ExportedFile {
   blob: Blob;
   width: number;
   height: number;
+  kind: "image" | "video";
+  /** Video files only. */
+  duration?: number;
+  hasAudio?: boolean;
+  /** Recorded in real time by the fallback (format depends on the browser, no sound). */
+  realtime?: boolean;
 }
 
 export class ExportCancelled extends Error {
@@ -135,6 +150,36 @@ export async function exportSlides(project: Project, res: ImageStore, opts: Expo
   opts.onProgress?.(0, frames.length);
   for (const frame of frames) {
     check();
+    if (opts.video?.mode === "video" && frameDuration(project, frame) > 0) {
+      let lastShown = 0;
+      // The encoder and demuxer are a large chunk of code: only loaded when a video is really exported.
+      const { exportVideoSlide } = await import("./video");
+      const result = await exportVideoSlide(project, frame, res, {
+        resolution: opts.video.resolution,
+        quality: opts.video.quality,
+        audio: opts.video.audio,
+        check,
+        onProgress: (n, total) => {
+          // A few updates per second are plenty; every frame would only slow the export down.
+          if (n !== total && n - lastShown < 6) return;
+          lastShown = n;
+          opts.onProgress?.(files.length + n / total, frames.length, `Slide ${frame.slideIndex + 1}: frame ${n} of ${total}`);
+        },
+      });
+      files.push({
+        name: slideFileNameWithExt(project.name, frame.slideIndex, project.slides.length, result.ext),
+        blob: result.blob,
+        width: result.width,
+        height: result.height,
+        kind: "video",
+        duration: result.duration,
+        hasAudio: result.hasAudio,
+        realtime: result.realtime,
+      });
+      opts.onProgress?.(files.length, frames.length);
+      await new Promise((r) => setTimeout(r, 0));
+      continue;
+    }
     const blob = await renderFrame(project, frame, res, {
       pixelRatio: opts.scale,
       mime: info.mime,
@@ -153,6 +198,7 @@ export async function exportSlides(project: Project, res: ImageStore, opts: Expo
       name: slideFileName(project.name, frame.slideIndex, project.slides.length, opts.format),
       blob,
       ...actual,
+      kind: "image",
     });
     opts.onProgress?.(files.length, frames.length);
     // Yield so the UI can paint progress and react to Cancel.

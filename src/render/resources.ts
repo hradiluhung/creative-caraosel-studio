@@ -6,6 +6,7 @@ import { coverCrop } from "@/document/geometry";
 import { isNeutral, type Adjustments, type ImageElement, type VideoElement } from "@/document/schema";
 import { applyAdjustments } from "./adjust";
 import type { AdjustRequest, AdjustResponse } from "./adjust.worker";
+import { MusicPlayer } from "./musicPlayer";
 import { VideoPool, type VideoFrameOptions } from "./videoPool";
 
 export type BlobLoader = (assetId: string) => Promise<Blob | undefined>;
@@ -47,12 +48,12 @@ const FULL_PASS_DELAY_MS = 140;
 
 type Entry = {
   status: "loading" | "ready" | "error";
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   /** The decoded photo, or the stored poster still of a video. */
   image?: HTMLImageElement;
   /** Object URL of `image`. */
   url?: string;
-  /** Object URL of the video file itself. */
+  /** Object URL of the video or audio file itself. */
   videoUrl?: string;
   promise: Promise<void>;
 };
@@ -71,24 +72,53 @@ export class ImageStore implements RenderResources {
 
   /** Playing videos, poster frames and per-element frame canvases. */
   readonly videos: VideoPool;
+  /** Background music of the slide that is being previewed. */
+  readonly music: MusicPlayer;
 
   /** posterLoader returns the small still stored next to a video asset (optional). */
   constructor(
     private loader: BlobLoader,
     private posterLoader?: BlobLoader,
   ) {
-    this.videos = new VideoPool(
-      (assetId) => {
-        const entry = this.entries.get(assetId);
-        if (!entry) void this.load(assetId);
-        return entry?.status === "ready" && entry.videoUrl ? { url: entry.videoUrl, poster: entry.image } : undefined;
-      },
-      () => this.listeners.forEach((l) => l()),
-    );
+    this.videos = new VideoPool(this.videoSource, () => this.listeners.forEach((l) => l()));
+    this.music = new MusicPlayer((assetId) => this.getAudioUrl(assetId));
   }
+
+  private videoSource = (assetId: string) => {
+    const entry = this.entries.get(assetId);
+    if (!entry) void this.load(assetId);
+    return entry?.status === "ready" && entry.kind === "video" && entry.videoUrl ? { url: entry.videoUrl, poster: entry.image } : undefined;
+  };
 
   getVideoFrame(el: VideoElement, opts: VideoFrameOptions) {
     return this.videos.frame(el, opts);
+  }
+
+  /**
+   * A second, silent set of videos for the exporter, and the same resources with video frames
+   * taken from it. Export seeks frame by frame; doing that on the editor's own videos would
+   * repaint the canvas and every thumbnail for each exported frame.
+   */
+  forExport(): { resources: RenderResources; videos: VideoPool } {
+    const videos = new VideoPool(this.videoSource, () => undefined, true);
+    const resources: RenderResources = {
+      getImage: (assetId) => this.getImage(assetId),
+      getProcessed: (el, opts) => this.getProcessed(el, opts),
+      getVideoFrame: (el, opts) => videos.frame(el, opts),
+    };
+    return { resources, videos };
+  }
+
+  /** The stored original of an asset (the exporter decodes sound from it). */
+  getBlob(assetId: string) {
+    return this.loader(assetId);
+  }
+
+  /** Object URL of a loaded audio asset (starts loading it when needed). */
+  getAudioUrl(assetId: string): string | undefined {
+    const entry = this.entries.get(assetId);
+    if (!entry) void this.load(assetId);
+    return entry?.status === "ready" && entry.kind === "audio" ? entry.videoUrl : undefined;
   }
 
   isVideo(assetId: string) {
@@ -331,7 +361,10 @@ export class ImageStore implements RenderResources {
       try {
         const blob = await this.loader(assetId);
         if (!blob) throw new Error("asset not found");
-        if (blob.type.startsWith("video/")) {
+        if (blob.type.startsWith("audio/")) {
+          entry.kind = "audio";
+          entry.videoUrl = URL.createObjectURL(blob);
+        } else if (blob.type.startsWith("video/")) {
           entry.kind = "video";
           entry.videoUrl = URL.createObjectURL(blob);
           // The stored still is only a quick preview: a video without one is still usable.
@@ -365,6 +398,7 @@ export class ImageStore implements RenderResources {
   /** Release object URLs. Call when the editor unmounts. */
   dispose() {
     this.videos.dispose();
+    this.music.stop();
     for (const e of this.entries.values()) {
       if (e.url) URL.revokeObjectURL(e.url);
       if (e.videoUrl) URL.revokeObjectURL(e.videoUrl);

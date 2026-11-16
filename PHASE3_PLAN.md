@@ -7,9 +7,9 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 ## State before Phase 3
 
 - Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
-- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (74 tests after C1),
-  `npm run test:e2e` (36 + 28 + 48 browser checks; headers of `tests/e2e*.mjs` explain the setup).
-- Document schema was version 2. C1 bumped it to 3 with a `2 -> 3` migration in
+- Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (95 tests after C4),
+  `npm run test:e2e` (36 + 28 + 105 browser checks; headers of `tests/e2e*.mjs` explain the setup).
+- Document schema was version 2. C1 bumped it to 3, C2 to 4 and C4 to 5, each with a migration in
   `src/document/migrations.ts` (never edit old migrations).
 
 ## Rules that must not be broken
@@ -75,9 +75,9 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 ## Progress
 
 - [x] C1. Video as an element (done 2026-11-16)
-- [ ] C2. Timeline
-- [ ] C3. Video export
-- [ ] C4. Audio and polish
+- [x] C2. Timeline (done 2026-11-16)
+- [x] C3. Video export (done 2026-11-16)
+- [x] C4. Audio and polish (done 2026-11-16, see "C4: not done / not verified")
 
 ### C1: what was built
 
@@ -124,14 +124,167 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
   been confirmed on the iPhone yet.** MOV / HEVC, the autoplay rules for sound and memory with long
   clips are still only handled in code, not tested on a device.
 - The "sound was blocked" notice path has no automated test (headless Chrome never blocks it).
-- All clips start at slide time 0. There is no per-clip start offset in the schema yet; C2's "split at
-  playhead" needs one (add an optional field with a migration or default, do not reuse `trimStart`).
-- `Slide.duration` exists in the schema and is honoured by `surfaceDuration`, but there is no UI to
-  set it yet (C2). A seamless panorama has no duration field: it always uses its longest clip.
 - When playback reaches the end it stops and shows the poster frames again (no looping preview).
 - Video has no adjustments or filters (C4 decides). Videos are allowed in seamless projects.
 - Video slides still export as JPG / PNG stills. Nothing about MP4 export exists yet (C3).
 
-Notes for the next session: start with C2. The playhead already lives in the store (`playback`,
-`playhead`) and in `CanvasStage` (`playTimeRef`, the exact value); a timeline only needs a way to set
-it (seek while paused: set `playTimeRef`, then `setPlayback("paused", t)`).
+### Playback lag on the iPhone (reported 2026-11-16, after C1)
+
+Import worked on the iPhone after the `loadeddata` fix, but preview playback was laggy. This was a
+weakness of the C1 preview, not something later checkpoints would have fixed. Changes:
+
+- **The clock follows the video.** Before, the wall clock was the master and a video that started
+  late or stuttered was forced to seek to catch up, again and again. Now `VideoPool.sync` returns
+  how far the leading clip is from the clock and `CanvasStage` moves the clock; a playing video is
+  only seeked when it is far off (loop wrap, trim change). The clock holds while a clip is starting
+  or buffering (at most 3 s).
+- **Repaint at the video's frame rate** (`requestVideoFrameCallback` where available) instead of 60
+  times a second.
+- **Fewer pixels while playing:** the content layer is drawn at a pixel ratio of at most 1.5 during
+  playback (full ratio again on pause / stop) and video frames at their on-screen size.
+- Live `<video>` elements are attached to the page (2 px, nearly transparent) because Safari
+  decodes at full rate only for videos in the document.
+- `tests/perf-playback.mjs` (phone viewport at 3x, CPU throttled 4x, 1080p clip): painted frames per
+  second went from 7.8 to about 13, forced seeks during playback from 2 or 3 to 0. These numbers come
+  from software-rendered headless Chrome and only show the direction.
+- **Not confirmed on the iPhone yet.** If it still lags there, the next things to try are caching the
+  non-video layers as bitmaps during playback and lowering `PLAYBACK_PIXEL_RATIO` in `CanvasStage`.
+
+### C2: what was built
+
+- Schema v4: every video element has `start` (slide seconds). Migration `3 -> 4` sets it to 0.
+- `timing.ts`: a clip is on screen only while it plays (`clipActive`): from `start` until one pass
+  is over, or until the end of the slide when it loops. New pure edit helpers `trimClipStart`,
+  `trimClipEnd`, `moveClip`, `splitClip`; operations `splitVideo` and `setSlideDuration`.
+- `Timeline.tsx` (replaces the floating play button; `PlaybackBar` is now its transport): ruler with
+  a draggable playhead, one bar per clip with trim handles, drag a bar to move it in time, split at
+  the playhead, zoom, the other layers as full-length bars, fixed slide length (independent slides
+  only). Folded by default on phones. Trim and move drags are one undo step each.
+- `canvasApi.seek(t)`: pauses at `t` and shows that frame. The scene builder hides clips that are
+  not active at the requested `videoTime` (poster mode still shows every clip).
+- Properties panel: "Starts at".
+
+### C2: how it was verified
+
+- 83 unit tests (9 new: migration 3 -> 4, start offsets, trim / move / split helpers, `splitVideo`,
+  `setSlideDuration`). `tests/e2e-phase3.mjs` has 25 new timeline checks (scrub by press and drag with
+  pixel checks, split, playback through the cut, trim both edges, undo, move, typed start, zoom, slide
+  length, reload). All suites: 36/36, 28/28, 73/73.
+- Looked at on a desktop and an emulated phone viewport. **Not tried on a real phone.**
+- Test note: Puppeteer's clipped screenshots resize the window for a moment unless
+  `captureBeyondViewport: false` is passed. That flipped the app into its phone layout, remounted
+  the canvas and released the videos; the helper in the e2e file now passes the flag.
+
+### C2: known gaps
+
+- At a cut the second clip is a second `<video>` that has to start: the preview can hold for a
+  moment there. Export (C3) must not have this: it decodes frames by time, not by playing.
+- A seamless panorama has no fixed length (it always follows its last clip).
+- No snapping between clips, no ripple delete, no multi-select on the timeline.
+
+### C3: what was built
+
+- `src/export/video.ts`: one video file per video slide. Each frame is drawn by the scene builder
+  (`buildSurfaceContent` once, then `refreshVideoFrames` with `videoTime` per frame) on an off-screen
+  stage at output size, encoded with WebCodecs `VideoEncoder` (H.264, High profile with Main and
+  Baseline as fallbacks) and muxed to MP4 with `mp4-muxer`. 30 fps; 720p or 1080p (short side, never
+  upscaled, even sides); three quality levels (bits per pixel).
+- **Frames are decoded, not seeked** (`src/export/frameSource.ts`, library `mediabunny`): the file is
+  demuxed and decoded forward once with `VideoDecoder`. Seeking a `<video>` to every frame took 55 s
+  for a 6 s 1080p clip in the test environment; decoding takes under 4 s. A clip whose file cannot be
+  decoded this way falls back to seeking (`VideoPool.seekFrames`), per clip.
+- Sound: the audible clips are mixed over the slide's timeline with `OfflineAudioContext` (start,
+  trim, loop, volume, speed) and encoded with `AudioEncoder`: AAC where the browser can, Opus as a
+  second choice, or no sound. The dialog only offers what was detected.
+- Fallback without WebCodecs: the slide is played in real time into `MediaRecorder` on
+  `canvas.captureStream()`; format is whatever the browser records, no sound. The dialog says so.
+- `exportSlides` now returns mixed files; `packageZip` gives `name-01.jpg`, `name-02.mp4`, ... in
+  slide order. Slides are never merged into one video. Every MP4 is opened again after encoding and
+  its size and duration are compared with what was asked.
+- Export dialog: "Video file / Still image" for video slides, size, quality, sound, an honest note
+  about what this device will produce, progress per frame, cancel.
+- `src/export/videoSupport.ts` (feature detection, sizes, bitrates) is separate from `video.ts` so
+  the two libraries (about 450 kB) are only loaded when a video is exported. The timeline fetches that
+  chunk as soon as a slide has video, so the service worker has it for offline use.
+
+### C3: how it was verified
+
+- 88 unit tests (5 new: which frames are video and how long, panorama slices, output size, bitrate,
+  file names). `tests/e2e-phase3.mjs` has 17 new checks: mixed ZIP order and file types by signature,
+  H.264 and sound track present, size, duration, **frame content at 0 / 0.9 / 1.1 / 1.9 s** (red, red,
+  blue, blue: the export is frame exact around the color change), trim and 720p and "no sound",
+  a split clip exported seamlessly across the cut, and the real-time fallback with WebCodecs removed.
+  All suites: 36/36, 28/28, 90/90.
+- Checked by hand with ffprobe / ffmpeg: 60 frames for 2 s, frame 29 red and frame 30 blue, the
+  sound track is audible (-21 dB mean).
+
+### C3: not verified / limits
+
+- **AAC could not be tested**: the test browser (Chrome on Linux) cannot encode AAC, so sound was
+  verified with Opus only. The AAC path differs by one codec string. Chrome on macOS / Windows /
+  Android encodes AAC; Safari only in recent versions. Where neither works the MP4 is silent and the
+  dialog says so.
+- **Not run on an iPhone or in Safari.** WebCodecs encoding, `mediabunny` decoding and the share
+  sheet for MP4 are expected to work there but are untested.
+- A clip that is sped up or slowed down changes pitch in the export (the preview keeps the pitch).
+- The whole MP4 is built in memory, and sound is decoded from the whole source file: fine for
+  carousel-length slides, heavy for many minutes of 1080p on a phone.
+- The real-time fallback needs the tab to stay in front and its length is only approximately checked.
+- HEVC or other sources the browser can play but `VideoDecoder` cannot decode use the slow seek path.
+
+### C4: what was built
+
+- **Background music per slide.** Schema v5: optional `Slide.audio` (`assetId`, `start`, `trimStart`,
+  `trimEnd`, `volume`, `fadeIn`, `fadeOut`, `loop`); audio assets have `width` / `height` 0. Migration
+  `4 -> 5` only bumps the version. Music exists on independent slides that contain video (a slide
+  without video is a still image and has no duration); a seamless panorama has no music track.
+- Import (`persistence/audio.ts`): MP3, M4A and WAV by signature (an `.m4a` is no longer mistaken for
+  a video), length from an `<audio>` element, 60 MB limit, and a 240-bar waveform stored with the
+  asset (skipped for files over 12 minutes, where decoding the whole song would need too much memory).
+- Timeline: a music bar with its waveform (drag to move, handles to trim), volume, fade in / out,
+  loop, replace, remove. All undoable.
+- One gain curve for preview and export (`trackGainAt` / `trackGainPoints` in `timing.ts`). Preview:
+  `render/musicPlayer.ts`, an `<audio>` element kept in step with the playback clock. Export: the
+  track is mixed with the clips' sound in `mixAudio`, the fades as linear ramps.
+- **Video filters: decided against, and documented.** The adjustment pipeline is per-pixel
+  JavaScript: on a desktop core one 1080p frame takes about 18 ms for color adjustments and about
+  240 ms with blur (measured), several times that on a phone, against a 33 ms budget at 30 fps. Video
+  is therefore limited to masks, corner radius, borders, shadows, flips, opacity and blend modes. The
+  properties panel says so.
+- Polish: a hidden tab pauses playback (media keeps running while painting stops); the preview no
+  longer preserves pitch for sped-up or slowed-down clips, so it sounds like the export; live videos
+  are released on stop and when leaving the slide (already since C1 / C2).
+
+### C4: how it was verified
+
+- 95 unit tests (7 new: schema v5, migration, track window, gain curve and its corner points, audio
+  signatures, waveform bars). `tests/e2e-phase3.mjs` has 15 new checks: rejected fake file, WAV and MP3
+  import, stored waveform, music bar and drawn waveform, fade in stored, playback to the end with
+  music, **the sound of the exported MP4 measured** (clips muted: music present; with a 1 s fade in the
+  first 0.2 s is much quieter than the middle; with the music moved to start at 1 s the first second
+  is silent), remove and undo. All suites: 36/36, 28/28, 105/105.
+
+### C4: not done / not verified
+
+- **"Test with long clips on iPhone" was not done.** Nothing in Phase 3 after the import fix has been
+  run on a real phone by me: playback smoothness, the timeline with touch, MP4 export and music are
+  verified in desktop Chrome (and an emulated phone viewport) only.
+- **The preview's sound cannot be checked in a headless browser**, so music playback in the editor is
+  only verified indirectly (the slide plays to its end without errors). The exported sound is measured.
+- iOS ignores the volume of media elements: in the preview there, clip volume, music volume and fades
+  are not audible (everything plays at full volume). The export applies them. A Web Audio gain node
+  would fix the preview; not built.
+- No waveform for video clips, no separate music for a seamless panorama, no music on slides without
+  video, one music track per slide.
+
+## Phase 3 status
+
+All four checkpoints are implemented and pass the automated checks listed above, in desktop Chrome.
+What still needs a person with the device, in order of risk:
+
+1. iPhone: is playback smooth now? (lag fix after C1, see "Playback lag on the iPhone")
+2. iPhone: export a mixed carousel and open the MP4 in Photos / upload it to Instagram. Check sound
+   (AAC needs a recent iOS; otherwise the dialog announces a silent file).
+3. Mac Chrome: export with AAC sound (could not be tested on Linux).
+4. iPhone: a long clip (several minutes, 1080p or 4K): import time, memory, export time.
+5. The timeline with a finger: trim handles, scrubbing, split.

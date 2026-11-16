@@ -26,6 +26,8 @@ export interface StoredAsset extends AssetRef {
   blob: Blob;
   /** Video assets only: a small still frame for instant previews (never referenced by documents). */
   poster?: Blob;
+  /** Audio assets only: waveform bars, 0..1 (decoration for the timeline). */
+  peaks?: number[];
   createdAt: string;
 }
 
@@ -241,6 +243,10 @@ export async function getAssetBlob(id: string): Promise<Blob | undefined> {
 
 export async function getAssetPoster(id: string): Promise<Blob | undefined> {
   return (await (await db()).get("assets", id))?.poster;
+}
+
+export async function getAssetPeaks(id: string): Promise<number[] | undefined> {
+  return (await (await db()).get("assets", id))?.peaks;
 }
 
 /** Asset refs of a project that have no element using them (candidates for cleanup UI). */

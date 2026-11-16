@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SHAPE_LABELS } from "@/document/factory";
 import { getSurface } from "@/document/geometry";
 import { addAssetRef, setBackground } from "@/document/operations";
-import { isVideoAsset, type AssetRef, type Background, type OverlayKind, type ShapeKind } from "@/document/schema";
+import { isAudioAsset, isVideoAsset, type AssetRef, type Background, type OverlayKind, type ShapeKind } from "@/document/schema";
 import { formatSeconds } from "@/document/timing";
 import { getAssetBlob, listBrandKits, type BrandKit } from "@/persistence/db";
 import { STICKERS, type StickerDef } from "@/render/stickers";
@@ -248,7 +248,7 @@ export function InsertPanel({ images }: { images: ImageStore }) {
   const [videoErrors, setVideoErrors] = useState<string[]>([]);
   const [, setTick] = useState(0);
   useEffect(() => images.subscribe(() => setTick((t) => t + 1)), [images]);
-  const photoAssets = assets?.filter((a) => !isVideoAsset(a)) ?? [];
+  const photoAssets = assets?.filter((a) => !isVideoAsset(a) && !isAudioAsset(a)) ?? [];
   const videoAssets = assets?.filter(isVideoAsset) ?? [];
 
   const onVideos = async (files: FileList | null) => {
@@ -352,7 +352,7 @@ export function InsertPanel({ images }: { images: ImageStore }) {
         <Button className="w-full" disabled={videoBusy} onClick={() => videoRef.current?.click()}>
           <Film className="h-4 w-4" /> {videoBusy ? "Importing…" : "Upload videos"}
         </Button>
-        <p className="text-[11px] text-muted">MP4, MOV or WebM, as far as this browser can play them. Video slides still export as a still image for now.</p>
+        <p className="text-[11px] text-muted">MP4, MOV or WebM, as far as this browser can play them.</p>
         {videoErrors.length > 0 && (
           <ul role="alert" className="space-y-1 text-xs text-danger">
             {videoErrors.map((e) => (

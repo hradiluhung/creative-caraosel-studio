@@ -9,7 +9,7 @@
  */
 import { coverCrop } from "@/document/geometry";
 import type { VideoElement } from "@/document/schema";
-import { clipEnded, videoTimeAt } from "@/document/timing";
+import { clipActive, clipEnded, videoTimeAt } from "@/document/timing";
 import { createSilentVideo, lastFrameTime, releaseVideo, seekVideo } from "./videoDom";
 
 export interface VideoFrameOptions {
@@ -27,7 +27,26 @@ export interface VideoSource {
   poster?: HTMLImageElement;
 }
 
-type Live = { assetId: string; video: HTMLVideoElement; cleanup: () => void };
+type Live = {
+  assetId: string;
+  video: HTMLVideoElement;
+  /** A frame that has not been painted yet was presented (only tracked with requestVideoFrameCallback). */
+  fresh: boolean;
+  /** False where requestVideoFrameCallback is missing: then every tick may carry a new frame. */
+  tracksFrames: boolean;
+  cleanup: () => void;
+};
+
+export interface SyncResult {
+  /**
+   * Seconds by which the clip that leads playback is ahead (+) or behind (-) of the slide time it
+   * was given. The caller adds this to its clock, so the clock follows the video instead of the
+   * video being forced to jump to the clock. 0 when no clip can lead right now.
+   */
+  lead: number;
+  /** A clip that should be moving is still starting up or buffering: the clock should hold. */
+  waiting: boolean;
+}
 type Poster = { status: "loading" | "ready" | "error"; canvas?: HTMLCanvasElement; promise: Promise<void> };
 type Drawable = { source: CanvasImageSource; width: number; height: number; signature: string | null };
 
@@ -37,6 +56,8 @@ const SLOT_CACHE_LIMIT = 32;
 const POSTER_MAX_SIDE = 4096;
 /** How far a playing video may run away from the clock before it is pulled back, in source seconds. */
 const DRIFT_TOLERANCE = 0.3;
+/** Up to this difference (source seconds) the clock is moved to the leading video; beyond it the video is. */
+const FOLLOW_LIMIT = 1.5;
 
 const posterKey = (assetId: string, time: number) => `${assetId}@${Math.round(time * 1000)}`;
 
@@ -47,6 +68,8 @@ export class VideoPool {
   /** Captures run one at a time: phones only allow a handful of video decoders at once. */
   private captureChain: Promise<void> = Promise.resolve();
   private disposed = false;
+  private hostEl: HTMLElement | null = null;
+  private external = new Map<string, { source: CanvasImageSource; width: number; height: number }>();
   /** True after the browser refused to start playback with sound (autoplay policy). */
   audioBlocked = false;
   private audioListeners = new Set<() => void>();
@@ -54,6 +77,8 @@ export class VideoPool {
   constructor(
     private source: (assetId: string) => VideoSource | undefined,
     private notify: () => void,
+    /** Never make a sound (the exporter's pool). */
+    private silent = false,
   ) {}
 
   // --- Frames ------------------------------------------------------------------
@@ -91,7 +116,8 @@ export class VideoPool {
     if (!ctx) return undefined;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.imageSmoothingQuality = "high";
+    // Stills are resampled carefully once; live frames are redrawn 30 times a second.
+    ctx.imageSmoothingQuality = signature === null ? "low" : "high";
     ctx.translate(el.flipX ? w : 0, el.flipY ? h : 0);
     ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
     try {
@@ -103,8 +129,19 @@ export class VideoPool {
     return slot.canvas;
   }
 
+  /**
+   * Hand in the picture a clip shows right now from outside (the exporter's decoded frames).
+   * While set, it is used instead of this pool's own <video> for that element. Null removes it.
+   */
+  setFrameSource(elementId: string, source: { source: CanvasImageSource; width: number; height: number } | null) {
+    if (source) this.external.set(elementId, source);
+    else this.external.delete(elementId);
+  }
+
   private drawable(el: VideoElement, time: number | undefined): Drawable | undefined {
     if (time !== undefined) {
+      const given = this.external.get(el.id);
+      if (given) return { ...given, signature: null };
       const video = this.live.get(el.id)?.video;
       if (video && video.readyState >= 2 && video.videoWidth > 0) {
         return { source: video, width: video.videoWidth, height: video.videoHeight, signature: null };
@@ -181,28 +218,53 @@ export class VideoPool {
   /**
    * Put every given clip at the frame that belongs to this slide time, playing or paused.
    * Called once per animation frame while playing. Videos of other elements are released.
+   *
+   * While playing, a video is never made to chase the clock: decoding starts late and stutters on
+   * phones, and every forced seek is a visible jump. Instead the first healthy clip leads and the
+   * caller moves its clock by the returned `lead`. Other clips are only seeked when they are far off.
    */
-  sync(elements: VideoElement[], time: number, playing: boolean) {
+  sync(elements: VideoElement[], time: number, playing: boolean): SyncResult {
     const wanted = new Set<string>();
+    const result: SyncResult = { lead: 0, waiting: false };
+    let hasLeader = false;
     for (const el of elements) {
       const entry = this.acquire(el);
       if (!entry) continue;
       wanted.add(el.id);
       const { video } = entry;
-      const ended = clipEnded(el, time);
+      const span = el.trimEnd - el.trimStart;
+      const started = time >= el.start;
+      const firstPass = started && (time - el.start) * el.playbackRate < span;
+      // The file itself can end a moment before the trimmed range does: that is the end of this pass.
+      const finished = clipEnded(el, time) || (!el.loop && video.ended);
       const target = Math.min(videoTimeAt(el, time), lastFrameTime(video));
-      const silent = el.muted || el.volume === 0 || this.audioBlocked;
+      const silent = this.silent || el.muted || el.volume === 0 || this.audioBlocked;
       if (video.muted !== silent) video.muted = silent;
       if (video.volume !== el.volume) video.volume = el.volume;
       if (video.playbackRate !== el.playbackRate) video.playbackRate = el.playbackRate;
-      const drift = Math.abs(video.currentTime - target);
-      if (playing && !ended) {
-        // A playing video keeps its own pace; it is only pulled back when it drifts (or loops around).
-        if (drift > (video.paused ? 0.02 : DRIFT_TOLERANCE * Math.max(1, el.playbackRate))) video.currentTime = target;
-        if (video.paused) this.start(video);
-      } else {
+      const ahead = video.currentTime - target;
+      // A clip that has not started yet waits, paused, on its first frame so it can start at once.
+      if (!playing || finished || !started) {
         if (!video.paused) video.pause();
-        if (drift > 0.02) video.currentTime = target;
+        if (Math.abs(ahead) > 0.02 && !video.seeking) video.currentTime = target;
+        continue;
+      }
+      if (video.paused || video.ended) {
+        if (Math.abs(ahead) > 0.02) video.currentTime = target;
+        this.start(video);
+        result.waiting = true;
+        continue;
+      }
+      if (video.seeking || video.readyState < 3) {
+        result.waiting = true;
+        continue;
+      }
+      if (!hasLeader && firstPass && Math.abs(ahead) <= FOLLOW_LIMIT) {
+        hasLeader = true;
+        result.lead = ahead / el.playbackRate;
+      } else if (Math.abs(ahead - (hasLeader ? result.lead * el.playbackRate : 0)) > DRIFT_TOLERANCE * Math.max(1, el.playbackRate)) {
+        // Far off (a loop came around, the trim changed, or it fell behind the leader): jump once.
+        video.currentTime = Math.min(target + (hasLeader ? result.lead * el.playbackRate : 0), lastFrameTime(video));
       }
     }
     for (const [id, entry] of this.live) {
@@ -210,6 +272,48 @@ export class VideoPool {
       entry.cleanup();
       this.live.delete(id);
     }
+    return result;
+  }
+
+  /**
+   * Exact frames for export: put every clip that is on screen at this slide time on its frame
+   * and wait until that frame can really be drawn. Throws when a frame cannot be read, so an
+   * export never silently contains a wrong or missing picture.
+   */
+  async seekFrames(elements: VideoElement[], time: number): Promise<void> {
+    for (const el of elements) {
+      if (!clipActive(el, time)) continue;
+      const entry = this.acquire(el);
+      if (!entry) throw new Error(`The video file of "${el.name}" is not loaded.`);
+      // A hair past the frame boundary, so rounding never lands on the frame before.
+      const target = Math.min(videoTimeAt(el, time) + 0.001, lastFrameTime(entry.video));
+      if (!(await seekVideo(entry.video, target))) throw new Error(`A frame of "${el.name}" could not be read from its video.`);
+    }
+  }
+
+  /**
+   * True when a playing video has presented a frame that was not painted yet (and marks it painted).
+   * Lets the editor repaint at the video's frame rate instead of the display's.
+   */
+  takeNewFrames(): boolean {
+    let any = false;
+    for (const entry of this.live.values()) {
+      if (entry.fresh || !entry.tracksFrames) any = true;
+      entry.fresh = false;
+    }
+    return any;
+  }
+
+  /** Live videos sit in the page, practically invisible: Safari only decodes at full rate for videos in the document. */
+  private host(): HTMLElement {
+    if (!this.hostEl) {
+      const el = document.createElement("div");
+      el.setAttribute("aria-hidden", "true");
+      el.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1";
+      document.body.appendChild(el);
+      this.hostEl = el;
+    }
+    return this.hostEl;
   }
 
   private acquire(el: VideoElement): Live | undefined {
@@ -225,20 +329,48 @@ export class VideoPool {
     video.playsInline = true;
     video.setAttribute("playsinline", "");
     video.preload = "auto";
-    video.muted = el.muted || this.audioBlocked;
+    video.muted = this.silent || el.muted || this.audioBlocked;
     video.src = src.url;
+    // The export resamples sound when a clip is sped up or slowed down, which shifts its pitch.
+    // The preview does the same, so what is heard here is what gets exported.
+    if ("preservesPitch" in video) video.preservesPitch = false;
+    video.style.cssText = "width:2px;height:2px";
+    this.host().appendChild(video);
     const redraw = () => !this.disposed && this.notify();
-    video.addEventListener("loadeddata", redraw);
-    video.addEventListener("seeked", redraw);
+    // Without requestVideoFrameCallback there is no signal for "the new frame is really there":
+    // repaint at the event and once more shortly after.
+    const settled = () => {
+      redraw();
+      if (!("requestVideoFrameCallback" in video)) window.setTimeout(redraw, 120);
+    };
+    video.addEventListener("loadeddata", settled);
+    video.addEventListener("seeked", settled);
+    // Feature detection: where the browser can tell us about presented frames, repaint only then.
+    const tracksFrames = "requestVideoFrameCallback" in video;
+    let frameRequest = 0;
     const entry: Live = {
       assetId: el.assetId,
       video,
+      fresh: true,
+      tracksFrames,
       cleanup: () => {
-        video.removeEventListener("loadeddata", redraw);
-        video.removeEventListener("seeked", redraw);
+        video.removeEventListener("loadeddata", settled);
+        video.removeEventListener("seeked", settled);
+        if (tracksFrames) video.cancelVideoFrameCallback(frameRequest);
         releaseVideo(video);
+        video.remove();
       },
     };
+    if (tracksFrames) {
+      const onFrame = () => {
+        entry.fresh = true;
+        // Paused (scrubbing): nothing is repainting on its own, so ask for it. "seeked" alone is not
+        // enough, the frame a seek lands on can reach the compositor a moment after that event.
+        if (video.paused) redraw();
+        frameRequest = video.requestVideoFrameCallback(onFrame);
+      };
+      frameRequest = video.requestVideoFrameCallback(onFrame);
+    }
     this.live.set(el.id, entry);
     return entry;
   }
@@ -284,5 +416,8 @@ export class VideoPool {
     for (const poster of this.posters.values()) if (poster.canvas) poster.canvas.width = poster.canvas.height = 0;
     this.posters.clear();
     this.audioListeners.clear();
+    this.external.clear();
+    this.hostEl?.remove();
+    this.hostEl = null;
   }
 }

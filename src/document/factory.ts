@@ -177,6 +177,7 @@ export function createVideo(asset: AssetRef, p: Placement): VideoElement {
     y: Math.round(p.centerY - height / 2),
     width,
     height,
+    start: 0,
     trimStart: 0,
     trimEnd: asset.duration ?? 1,
     volume: 1,

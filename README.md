@@ -5,7 +5,7 @@ panorama that is sliced on export. Works on desktop and phones, installable as a
 every project on the device (IndexedDB) so it opens offline.
 
 **Status: Phase 1 (foundation and basic editor) and Phase 2 (professional design features) are implemented and tested.
-Phase 3 (video) is in progress: video layers with preview playback work, MP4 export is not built yet (see [PHASE3_PLAN.md](./PHASE3_PLAN.md)).**
+Phase 3 (video: clips, timeline, MP4 export, background music) is implemented and tested in desktop Chrome; see [PHASE3_PLAN.md](./PHASE3_PLAN.md) for what still has to be checked on a real phone.**
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design, the full feature status and known limitations.
 
 ## Run it

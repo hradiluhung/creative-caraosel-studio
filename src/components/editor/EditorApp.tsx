@@ -16,7 +16,7 @@ import { CanvasStage } from "./CanvasStage";
 import { ExportDialog } from "./ExportDialog";
 import { BackgroundControls, InsertPanel } from "./InsertPanel";
 import { LayersPanel } from "./LayersPanel";
-import { PlaybackBar } from "./PlaybackBar";
+import { Timeline } from "./Timeline";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { SlideNavigator } from "./SlideNavigator";
 import { SaveStatus, TopBar } from "./TopBar";
@@ -111,7 +111,6 @@ function Workspace({ images }: { images: ImageStore }) {
       }}
     >
       <CanvasStage images={images} />
-      <PlaybackBar />
       {dropActive && (
         <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent/10 text-sm font-medium">
           Drop images or videos to add them
@@ -156,6 +155,7 @@ function Workspace({ images }: { images: ImageStore }) {
       <div className="flex h-dvh flex-col overflow-hidden">
         <TopBar compact onExport={() => setExporting(true)} />
         {canvas}
+        {!sheet && <Timeline />}
         {sheet === "insert" && (
           <Sheet title="Add" onClose={() => setSheet(null)}>
             <InsertPanel images={images} />
@@ -213,6 +213,7 @@ function Workspace({ images }: { images: ImageStore }) {
         )}
         <div className="flex min-w-0 flex-1 flex-col">
           {canvas}
+          <Timeline />
           <SlideNavigator thumbnails={thumbnails} />
         </div>
         {panels.right && (

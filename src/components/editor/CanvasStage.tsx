@@ -43,6 +43,14 @@ interface Refs {
 const EDITOR_BUILD: BuildOptions = { interactive: true, quality: 1, maxImageSide: 1600, showPlaceholders: true, progressive: true };
 /** The playback clock is reported to the UI this often; the canvas itself redraws every frame. */
 const PLAYHEAD_REPORT_S = 0.1;
+/** Longest time the clock holds for a clip that is starting or buffering. */
+const MAX_WAIT_MS = 3000;
+/** Highest canvas pixel density while a slide is playing (see the playback effect). */
+const PLAYBACK_PIXEL_RATIO = Number(process.env.NEXT_PUBLIC_PLAYBACK_RATIO || 1.5);
+
+const playbackPixelRatio = () => Math.min(window.devicePixelRatio || 1, PLAYBACK_PIXEL_RATIO);
+/** Video frames are drawn at the size they have on screen while playing, never larger than the document. */
+const playingVideoQuality = (stage: Konva.Stage) => Math.min(1, stage.scaleX() * playbackPixelRatio());
 
 const store = () => useEditorStore.getState();
 /** Visible video clips of the active surface and how long the surface plays. */
@@ -567,16 +575,38 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     canvasApi.togglePlayback = () => {
       const s = store();
       if (s.playback === "playing") return s.setPlayback("paused", playTimeRef.current);
-      const { clips, duration } = activeClips();
+      const { surface, clips, duration } = activeClips();
       if (clips.length === 0 || duration <= 0) return;
       if (s.playback === "stopped" || playTimeRef.current >= duration) playTimeRef.current = 0;
       s.setPlaybackNotice(null);
       images.videos.resetAudioBlock();
       // Started right here, inside the tap, because browsers only allow sound from a user gesture.
       images.videos.sync(clips, playTimeRef.current, true);
+      images.music.sync(surface?.audio, playTimeRef.current, true, duration);
       s.setPlayback("playing", playTimeRef.current);
     };
     canvasApi.stopPlayback = () => store().setPlayback("stopped");
+    canvasApi.seek = (seconds) => {
+      const { surface, clips, duration } = activeClips();
+      if (!surface || clips.length === 0) return;
+      const time = Math.min(Math.max(0, seconds), Math.max(0, duration - 0.001));
+      const wasPaused = store().playback === "paused";
+      playTimeRef.current = time;
+      images.videos.sync(clips, time, false);
+      images.music.sync(surface.audio, time, false, duration);
+      store().setPlayback("paused", time);
+      // Already paused: nothing re-renders, so put the frames of the new time on screen directly.
+      // (Each video also asks for a rebuild as soon as its seek has landed.)
+      if (wasPaused) {
+        refreshVideoFrames(holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time });
+        contentLayer.batchDraw();
+      }
+    };
+    // A hidden tab stops painting but media keeps playing: pause instead of drifting apart.
+    const onHidden = () => {
+      if (document.hidden && store().playback === "playing") store().setPlayback("paused", playTimeRef.current);
+    };
+    document.addEventListener("visibilitychange", onHidden);
     const unsubscribeAudio = images.videos.subscribeAudioBlocked(() =>
       store().setPlaybackNotice("This browser blocked the sound. Pause and press play again to hear it."),
     );
@@ -593,9 +623,11 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       canvasApi.fit = canvasApi.focusSlide = canvasApi.zoomBy = canvasApi.zoomTo = () => {};
-      canvasApi.togglePlayback = canvasApi.stopPlayback = () => {};
+      canvasApi.togglePlayback = canvasApi.stopPlayback = canvasApi.seek = () => {};
       unsubscribeAudio();
+      document.removeEventListener("visibilitychange", onHidden);
       images.videos.stop();
+      images.music.stop();
       stage.destroy();
       refs.current = null;
     };
@@ -644,8 +676,10 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       // Nothing left to preview (the last clip was deleted or hidden): back to the idle state.
       if (clips.length === 0) store().setPlayback("stopped");
       else images.videos.sync(clips, playTimeRef.current, false);
+      images.music.sync(surface.audio, playTimeRef.current, false, surfaceDuration(surface.elements, surface.duration));
     }
-    const content = buildSurfaceContent(surface, images, { ...EDITOR_BUILD, videoTime });
+    const videoQuality = playback === "playing" ? playingVideoQuality(r.stage) : undefined;
+    const content = buildSurfaceContent(surface, images, { ...EDITOR_BUILD, videoTime, videoQuality });
     r.holder.add(content);
     if (editingTextId) content.findOne(`#${editingTextId}`)?.visible(false);
 
@@ -685,31 +719,58 @@ export function CanvasStage({ images }: { images: ImageStore }) {
     if (playback === "stopped") {
       playTimeRef.current = 0;
       images.videos.stop();
+      images.music.stop();
       return;
     }
     if (playback !== "playing") return;
-    const startedAt = performance.now();
-    const startTime = playTimeRef.current;
-    let reported = startTime;
-    // The wall clock is the master; each video is kept in step with it by VideoPool.sync.
+    // While playing, the canvas is drawn at a lower pixel density (text is a little softer) and the
+    // video frames at the size they have on screen: on a 3x phone that is 4 times fewer pixels per frame.
+    const canvas = r.contentLayer.getCanvas();
+    const fullRatio = canvas.getPixelRatio();
+    const playRatio = Math.min(fullRatio, playbackPixelRatio());
+    if (playRatio !== fullRatio) canvas.setPixelRatio(playRatio);
+
+    let reported = playTimeRef.current;
+    let last = performance.now();
+    let waitingSince = 0;
     const animation = new Konva.Animation(() => {
       const { surface, clips, duration } = activeClips();
-      const time = startTime + (performance.now() - startedAt) / 1000;
-      if (!surface || clips.length === 0 || time >= duration) {
+      if (!surface || clips.length === 0) {
+        store().setPlayback("stopped");
+        return false;
+      }
+      const now = performance.now();
+      const step = Math.min(0.25, (now - last) / 1000);
+      last = now;
+      // The clock follows the video (see VideoPool.sync): it advances with real time, holds while a
+      // clip is still starting or buffering, and is then moved to where the leading clip really is.
+      let time = playTimeRef.current;
+      const state = images.videos.sync(clips, time + step, true);
+      // A clip that never gets going (a file the browser gives up on) must not freeze the slide.
+      if (!state.waiting) waitingSince = 0;
+      else if (!waitingSince) waitingSince = now;
+      if (!state.waiting || now - waitingSince > MAX_WAIT_MS) time = Math.max(0, time + step + state.lead);
+      if (time >= duration) {
         store().setPlayback("stopped");
         return false;
       }
       playTimeRef.current = time;
+      images.music.sync(surface.audio, time, true, duration);
       if (Math.abs(time - reported) >= PLAYHEAD_REPORT_S) {
         reported = time;
         store().setPlayhead(time);
       }
-      images.videos.sync(clips, time, true);
-      refreshVideoFrames(r.holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time });
+      // Repaint only when a video has a new frame: a 30 fps clip does not need 60 paints a second.
+      if (!images.videos.takeNewFrames()) return false;
+      refreshVideoFrames(r.holder, surface.elements, images, { ...EDITOR_BUILD, videoTime: time, videoQuality: playingVideoQuality(r.stage) });
     }, r.contentLayer);
     animation.start();
     return () => {
       animation.stop();
+      if (playRatio !== fullRatio) {
+        canvas.setPixelRatio(fullRatio);
+        r.contentLayer.batchDraw();
+      }
     };
   }, [playback, images]);
 

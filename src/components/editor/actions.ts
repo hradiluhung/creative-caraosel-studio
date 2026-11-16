@@ -1,13 +1,16 @@
 /** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
 import { createImage, createOverlay, createShape, createSticker, createText, createVideo, placementFor, type Placement, type TextPreset } from "@/document/factory";
 import { getSurface, rotatedBounds } from "@/document/geometry";
-import { addAssetRef, addElements, updateElements } from "@/document/operations";
-import { isVideoAsset, type AssetRef, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
+import { createId } from "@/document/ids";
+import { addAssetRef, addElements, setSlideAudio, setSlideDuration, splitVideo, updateElements } from "@/document/operations";
+import { isVideoAsset, type AssetRef, type AudioTrack, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
 import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
 import type { StickerDef } from "@/render/stickers";
 import { importImageFile, sniffImageType } from "@/persistence/assets";
+import { importAudioFile } from "@/persistence/audio";
 import { importVideoFile } from "@/persistence/video";
+import { createAudioTrack } from "@/document/timing";
 import { sniffVideoType } from "@/persistence/videoSniff";
 import { useEditorStore } from "@/store/editorStore";
 
@@ -143,4 +146,49 @@ export function alignSelected(edge: AlignEdge) {
     }
     return next;
   });
+}
+
+/** Cut a video clip in two at a slide time and select the second half. Returns false when the time is outside the clip. */
+export function splitClipAt(id: string, slideTime: number): boolean {
+  const s = store();
+  const newId = createId();
+  let done = false;
+  s.commit((p) => {
+    const result = splitVideo(p, s.activeSurfaceId, id, slideTime, newId);
+    done = result.newId !== null;
+    return result.project;
+  });
+  if (done) s.select([newId]);
+  return done;
+}
+
+/** Fix the active slide's length in seconds, or pass undefined to follow its clips again. */
+export function setActiveSlideDuration(duration: number | undefined) {
+  const s = store();
+  s.commit((p) => setSlideDuration(p, s.activeSurfaceId, duration), { coalesce: `slide-duration:${s.activeSurfaceId}` });
+}
+
+/** Import a music file and make it the background music of the active slide. Returns an error message or null. */
+export async function importMusic(file: File): Promise<string | null> {
+  try {
+    const asset = await importAudioFile(file);
+    const s = store();
+    s.commit((p) => setSlideAudio(addAssetRef(p, asset), s.activeSurfaceId, createAudioTrack(asset)));
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : `Could not import "${file.name}".`;
+  }
+}
+
+/** Change the active slide's music, or remove it with null. Slider drags coalesce into one undo step. */
+export function updateMusic(patch: Partial<AudioTrack> | null, coalesce?: string) {
+  const s = store();
+  s.commit(
+    (p) => {
+      const current = p.slides.find((slide) => slide.id === s.activeSurfaceId)?.audio;
+      if (!current) return p;
+      return setSlideAudio(p, s.activeSurfaceId, patch ? { ...current, ...patch } : undefined);
+    },
+    coalesce ? { coalesce: `music-${coalesce}:${s.activeSurfaceId}` } : undefined,
+  );
 }

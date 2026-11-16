@@ -3,7 +3,7 @@
  * The editor preview, thumbnails and the exporter all derive sizes and slice
  * rectangles from these functions, which is what keeps export identical to preview.
  */
-import type { Background, DesignElement, Project } from "./schema";
+import type { AudioTrack, Background, DesignElement, Project } from "./schema";
 
 export const PANORAMA_ID = "panorama";
 
@@ -61,6 +61,8 @@ export interface Surface {
   elements: DesignElement[];
   /** Manual length in seconds (video slides). Unset: as long as the longest clip. */
   duration?: number;
+  /** Background music (independent slides only). */
+  audio?: AudioTrack;
 }
 
 /** A rectangle of a surface that becomes one exported file. */
@@ -93,6 +95,7 @@ export function getSurfaces(project: Project): Surface[] {
     background: s.background,
     elements: s.elements,
     duration: s.duration,
+    audio: s.audio,
   }));
 }
 

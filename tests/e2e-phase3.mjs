@@ -1,5 +1,8 @@
 /**
- * Phase 3, checkpoint C1: video as an element (import, poster frame, playback, properties).
+ * Phase 3: video. C1 video as an element (import, poster frame, playback, properties) and
+ * C2 timeline (scrub, split, trim, move, zoom, slide length), C3 video export (MP4 per video slide,
+ * mixed ZIP, frame-exact content, sound, real-time fallback), C4 background music (import, waveform,
+ * fades in the exported sound).
  * Same setup as tests/e2e.mjs. Extra fixtures:
  *   clip.mp4   2 s, 320x240, H.264 + AAC, first second red, second second blue:
  *     ffmpeg -f lavfi -i "color=c=red:s=320x240:d=1:r=30" -f lavfi -i "color=c=blue:s=320x240:d=1:r=30" \
@@ -10,10 +13,14 @@
  *     ffmpeg -f lavfi -i "color=c=red:s=160x240:d=1:r=30" -f lavfi -i "color=c=blue:s=160x240:d=1:r=30" \
  *       -filter_complex "[0:v][1:v]hstack=inputs=2[v]" -map "[v]" -c:v libx264 -pix_fmt yuv420p -movflags +faststart sides.mp4
  *   fake.mp4   any text file with that name
+ *   music.wav  3 s tone at constant loudness:  ffmpeg -f lavfi -i "sine=frequency=660:duration=3" -ac 2 -ar 44100 music.wav
+ *   music.mp3  the same:  ffmpeg -i music.wav -b:a 128k music.mp3
+ *   fake.mp3   any text file with that name
  */
 import fs from "node:fs";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
+import JSZip from "jszip";
 
 const BASE = process.env.BASE_URL || "http://localhost:3210";
 const FIXTURES = process.env.FIXTURES || "/tmp/fixtures";
@@ -92,6 +99,8 @@ const exportPng = async (name) => {
   await clickText("Export");
   await clickText("PNG");
   await clickText("Current");
+  // A slide with video would be exported as a video file: these checks want the still image.
+  if (await page.$('[data-testid="video-export"]')) await clickText("Still image");
   const warning = !!(await page.$('[data-testid="video-warning"]'));
   await clickText("Export 1 slide");
   await page.waitForSelector('[data-testid="export-done"]', { timeout: 60000 });
@@ -111,7 +120,8 @@ const toScreen = async (x, y, padding = 56) => {
 /** Color the editor canvas really shows at a document point. */
 const screenColor = async (x, y) => {
   const p = await toScreen(x, y);
-  await decodePng(await page.screenshot({ clip: { x: Math.round(p.x) - 2, y: Math.round(p.y) - 2, width: 4, height: 4 } }));
+  // captureBeyondViewport would resize the window to the clip for a moment, which flips the app into its phone layout.
+  await decodePng(await page.screenshot({ clip: { x: Math.round(p.x) - 2, y: Math.round(p.y) - 2, width: 4, height: 4 }, captureBeyondViewport: false }));
   return pixel(2, 2);
 };
 const isRed = (c) => c[0] > 180 && c[1] < 80 && c[2] < 80;
@@ -147,7 +157,7 @@ try {
   let doc = await readDoc();
   let el = doc.slides[0].elements[0];
   const asset = doc.assets[0];
-  ok("document is schema version 3 with one video element", doc.schemaVersion === 3 && doc.slides[0].elements.length === 1 && el.type === "video" && el.assetId === asset.id);
+  ok("document is schema version 5 with one video element", doc.schemaVersion === 5 && doc.slides[0].elements.length === 1 && el.type === "video" && el.assetId === asset.id);
   ok(
     "asset records real type, size and duration",
     doc.assets.length === 1 && asset.mime === "video/mp4" && asset.width === 320 && asset.height === 240 && Math.abs(asset.duration - 2) < 0.15,
@@ -171,7 +181,7 @@ try {
   let out = await exportPng("video-test-01.png");
   let center = await pixel(540, 675);
   const outside = await pixel(540, 200);
-  ok("export dialog says video is exported as a still for now", out.warning);
+  ok("a video slide can still be exported as an image of its poster frame", out.warning);
   ok("PNG export has the slide size", out.size.width === 1080 && out.size.height === 1350);
   ok("poster frame is visible in the PNG export", isRed(center) && outside.every((v) => v > 245), `${center} | ${outside}`);
 
@@ -300,6 +310,414 @@ try {
   await waitState("stopped");
   await page.screenshot({ path: `${SHOTS}/p3-02-end.png` });
 
+  // ---------- C2: timeline ----------
+  await page.goto(BASE, { waitUntil: "networkidle0" });
+  await clickText("New project");
+  await page.type("#np-name", "Timeline Test");
+  await setField("Number of slides", 1);
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Create project")]);
+  await page.waitForSelector('[data-testid="canvas-host"] canvas');
+  ok("no timeline on a slide without video", !(await page.$('[data-testid="timeline"]')));
+  await clickText("Add a heading");
+  await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/clip.mp4`);
+  await saved();
+  await setField("X position", 140);
+  await setField("Y position", 375);
+  await setField("Width", 800);
+  await setField("Height", 600);
+  await saved();
+  const videos = async () => (await readDoc()).slides[0].elements.filter((e) => e.type === "video");
+  const bars = () => page.$$eval('[data-testid="clip-bar"]', (ns) => ns.map((n) => ({ name: n.getAttribute("aria-label"), start: +n.dataset.start, length: +n.dataset.length, width: n.getBoundingClientRect().width })));
+  const ruler = async () => (await page.$('[data-testid="timeline-ruler"]')).boundingBox();
+  const seekTo = async (fraction) => {
+    const b = await ruler();
+    await page.mouse.click(b.x + b.width * fraction, b.y + 8);
+  };
+  const clockText = () => page.$eval('[data-testid="playback-clock"]', (n) => n.textContent);
+  const dragBy = async (selector, dx) => {
+    const b = await (await page.waitForSelector(selector, { visible: true })).boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(b.x + b.width / 2 + (dx * i) / 8, b.y + b.height / 2);
+    await page.mouse.up();
+  };
+  let tl = await bars();
+  ok("timeline shows the clip as a bar of its length", tl.length === 1 && tl[0].start === 0 && Math.abs(tl[0].length - 2) < 0.1, JSON.stringify(tl));
+  ok("and the text layer as a full-length overlay bar", (await page.$$eval('[data-testid="overlay-bar"]', (ns) => ns.map((n) => n.textContent.trim()))).join() === "Add a heading");
+
+  await seekTo(0.75);
+  shown = await showsColor(isBlue);
+  ok("pressing the ruler moves the playhead and shows that frame (1.5 s is blue)", shown.done && (await playbackState()) === "paused" && /^0:01\.[45] /.test(await clockText()), `${shown.c} ${await clockText()}`);
+  await seekTo(0.25);
+  shown = await showsColor(isRed);
+  ok("scrubbing back shows the earlier frame (0.5 s is red)", shown.done, String(shown.c));
+  const rb = await ruler();
+  await page.mouse.move(rb.x + rb.width * 0.2, rb.y + 8);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(rb.x + rb.width * (0.2 + 0.06 * i), rb.y + 8);
+  await page.mouse.up();
+  shown = await showsColor(isBlue);
+  ok("dragging along the ruler scrubs", shown.done && /^0:01\.[56] /.test(await clockText()), `${shown.c} ${await clockText()}`);
+  ok("scrubbing never changes the document", (await videos()).length === 1 && (await page.$eval('[data-testid="save-status"]', (n) => n.dataset.status)) === "saved");
+
+  // Split in the middle: the red half and the blue half become two clips that follow each other.
+  await seekTo(0.5);
+  await sleep(200);
+  await click(L("Split clip at playhead"));
+  await saved();
+  let vs = await videos();
+  ok(
+    "split creates two clips that meet at the playhead",
+    vs.length === 2 && vs[0].start === 0 && Math.abs(vs[0].trimEnd - 1) < 0.02 && Math.abs(vs[1].start - 1) < 0.02 && Math.abs(vs[1].trimStart - vs[0].trimEnd) < 1e-9 && Math.abs(vs[1].trimEnd - 2) < 0.1 && vs[1].assetId === vs[0].assetId,
+    JSON.stringify(vs.map((v) => [v.name, v.start, v.trimStart, v.trimEnd])),
+  );
+  tl = await bars();
+  ok("both halves are bars, the second starts where the first ends", tl.length === 2 && tl.some((b) => b.name === "Clip clip (2)" && Math.abs(b.start - 1) < 0.02) && Math.abs(tl[0].width - tl[1].width) < 4, JSON.stringify(tl));
+  ok("no second asset was created", (await readDoc()).assets.length === 1);
+  await seekTo(0.25);
+  shown = await showsColor(isRed);
+  ok("a clip is only on screen while it plays (the blue half is hidden at 0.5 s)", shown.done, String(shown.c));
+  await seekTo(0.8);
+  shown = await showsColor(isBlue);
+  ok("and the second half shows after the cut", shown.done, String(shown.c));
+  await click(L("Stop and show poster frames"));
+  await waitState("stopped", 2000);
+  await click(L("Play slide"));
+  const sawRed = await showsColor(isRed, 1500);
+  const sawBlue = await showsColor(isBlue, 5000);
+  ok("playback runs through the cut: first half, then second half", sawRed.done && sawBlue.done, `${sawRed.c} | ${sawBlue.c}`);
+  ok("and stops at the end of the last clip", (await waitState("stopped")).done);
+
+  // Trim the second half from its right edge: a quarter of the ruler is 0.5 s.
+  const quarter = (await ruler()).width / 4;
+  await dragBy(L("Trim end of clip (2)"), -quarter);
+  await saved();
+  vs = await videos();
+  ok("dragging a trim handle trims the clip", Math.abs(vs[1].trimEnd - 1.5) < 0.06 && Math.abs(vs[1].trimStart - 1) < 0.02 && vs[0].trimEnd < 1.02, JSON.stringify(vs.map((v) => [v.trimStart, v.trimEnd])));
+  ok("the slide got shorter with it", / \/ 0:01\.[45]$/.test(await clockText()), await clockText());
+  await page.keyboard.down("Control");
+  await page.keyboard.press("z");
+  await page.keyboard.up("Control");
+  await saved();
+  vs = await videos();
+  ok("a whole trim drag is one undo step", vs.length === 2 && Math.abs(vs[1].trimEnd - 2) < 0.1, String(vs[1]?.trimEnd));
+
+  // Trim the first half from its left edge: start and trimStart move together, the cut stays.
+  const span2 = (await ruler()).width / 2; // pixels per second
+  await dragBy(L("Trim start of clip"), span2 * 0.4);
+  await saved();
+  vs = await videos();
+  ok("trimming the left edge keeps the right edge in place", Math.abs(vs[0].start - 0.4) < 0.05 && Math.abs(vs[0].trimStart - 0.4) < 0.05 && Math.abs(vs[0].start + (vs[0].trimEnd - vs[0].trimStart) - 1) < 0.02, JSON.stringify([vs[0].start, vs[0].trimStart, vs[0].trimEnd]));
+
+  // Move the second half later: a gap opens and the slide gets longer.
+  const before = (await videos())[1].start;
+  await dragBy(L("Clip clip (2)"), span2 * 0.3);
+  await saved();
+  vs = await videos();
+  ok("dragging a clip moves it in time", Math.abs(vs[1].start - before - 0.3) < 0.08 && Math.abs(vs[1].trimStart - 1) < 0.02, `${before} -> ${vs[1].start}`);
+  await setField("Starts at", 1);
+  await saved();
+  ok("the start time can also be typed", (await videos())[1].start === 1);
+
+  // Zoom
+  const fitWidth = (await bars())[0].width;
+  await click(L("Zoom timeline in"));
+  await sleep(150);
+  const zoomed = (await bars())[0].width;
+  const scrolls = await page.$eval('[data-testid="timeline-scroll"]', (n) => n.scrollWidth > n.clientWidth + 10);
+  ok("zoom makes the bars longer and the timeline scrollable", Math.abs(zoomed / fitWidth - 1.6) < 0.05 && scrolls, `${fitWidth} -> ${zoomed}`);
+  await click(L("Zoom timeline out"));
+
+  // Slide length
+  await click("label ::-p-text(Fixed slide length)");
+  await saved();
+  let slideDoc = (await readDoc()).slides[0];
+  ok("fixing the slide length starts from the current length", Math.abs(slideDoc.duration - 2) < 0.1, String(slideDoc.duration));
+  await setField("Slide length", 3);
+  await saved();
+  slideDoc = (await readDoc()).slides[0];
+  ok("a manual slide length is stored and shown", slideDoc.duration === 3 && / \/ 0:03\.0$/.test(await clockText()), `${slideDoc.duration} ${await clockText()}`);
+  await click("label ::-p-text(Fixed slide length)");
+  await saved();
+  ok("unfixing follows the clips again", (await readDoc()).slides[0].duration === undefined && / \/ 0:02\.0$/.test(await clockText()), await clockText());
+
+  await page.reload({ waitUntil: "networkidle0" });
+  await page.waitForSelector('[data-testid="timeline"]');
+  tl = await bars();
+  ok("the edited timeline survives a reload", tl.length === 2 && (await readDoc()).schemaVersion === 5, JSON.stringify(tl));
+  await page.screenshot({ path: `${SHOTS}/p3-03-timeline.png` });
+
+  // ---------- C3: video export ----------
+  /** Wait for a downloaded file and return its bytes. */
+  const download = async (name, timeout = 120000) => {
+    const file = path.join(DL, name);
+    for (let i = 0; i < timeout / 150 && !fs.existsSync(file); i++) await sleep(150);
+    const buf = fs.readFileSync(file);
+    fs.rmSync(file);
+    return buf;
+  };
+  /** Open a video file in the browser and report its size, length and the color of some frames. */
+  const inspectVideo = (buf, mime, times, on = page) =>
+    on.evaluate(
+      async (b64, type, at) => {
+        const blob = await (await fetch(`data:${type};base64,${b64}`)).blob();
+        const v = document.createElement("video");
+        v.muted = true;
+        v.src = URL.createObjectURL(blob);
+        await new Promise((res, rej) => ((v.onloadeddata = res), (v.onerror = () => rej(new Error("cannot open the exported video")))));
+        if (!Number.isFinite(v.duration)) {
+          // Recorded files have no length in their header until the browser has looked for the end.
+          v.currentTime = 1e7;
+          await new Promise((res) => (v.ondurationchange = res));
+        }
+        const c = new OffscreenCanvas(v.videoWidth, v.videoHeight);
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        const colors = [];
+        for (const t of at) {
+          v.currentTime = Math.min(t, v.duration - 0.02);
+          await new Promise((res) => (v.onseeked = res));
+          // The frame a seek lands on can arrive a moment after "seeked" (and the callback may never come for a detached video).
+          await new Promise((res) => (v.requestVideoFrameCallback?.(res), setTimeout(res, 200)));
+          ctx.drawImage(v, 0, 0);
+          colors.push({
+            center: Array.from(ctx.getImageData(v.videoWidth / 2, v.videoHeight / 2, 1, 1).data),
+            top: Array.from(ctx.getImageData(v.videoWidth / 2, 20, 1, 1).data),
+          });
+        }
+        return { width: v.videoWidth, height: v.videoHeight, duration: v.duration, colors };
+      },
+      Buffer.from(buf).toString("base64"),
+      mime,
+      times,
+    );
+  const isMp4 = (buf) => buf.subarray(4, 8).toString("latin1") === "ftyp";
+  const isJpeg = (buf) => buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const hasBox = (buf, name) => buf.includes(Buffer.from(name, "latin1"));
+  const runExport = async (label) => {
+    await clickText(label);
+    await Promise.race([
+      page.waitForSelector('[data-testid="export-done"]', { timeout: 180000 }),
+      page.waitForSelector('[role="dialog"] [role="alert"]', { timeout: 180000 }).then(async (n) => {
+        throw new Error(`export failed: ${await n.evaluate((x) => x.textContent)}`);
+      }),
+    ]);
+  };
+
+  await page.goto(BASE, { waitUntil: "networkidle0" });
+  await clickText("New project");
+  await page.type("#np-name", "Mixed Export");
+  await setField("Number of slides", 3);
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Create project")]);
+  await page.waitForSelector('[data-testid="canvas-host"] canvas');
+  await (await page.$('[data-testid="image-input"]')).uploadFile(`${FIXTURES}/photo-a.jpg`);
+  await saved();
+  await click('ol[aria-label="Slides"] > li:nth-child(2) button');
+  await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/clip.mp4`);
+  await saved();
+  await setField("X position", 140);
+  await setField("Y position", 375);
+  await setField("Width", 800);
+  await setField("Height", 600);
+  await saved();
+
+  await clickText("Export");
+  await page.waitForSelector('[data-testid="video-export"]');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="video-note"]')?.textContent.includes("Checking"));
+  const note = await page.$eval('[data-testid="video-note"]', (n) => n.textContent);
+  const summary = await page.$eval('[data-testid="video-summary"]', (n) => n.textContent);
+  const soundOptions = await page.$$eval('[role="radiogroup"][aria-label="Sound"] [role="radio"]', (ns) => ns.map((n) => n.textContent));
+  ok("export dialog says what this browser will produce", /^MP4 \(H\.264\)/.test(note) && summary.startsWith("1080 × 1350, 30 fps"), `${note} | ${summary}`);
+  ok("and offers the sound codecs it can really encode", soundOptions.includes("No sound") && soundOptions.length >= 2, soundOptions.join());
+  ok("it announces a mixed ZIP", !!(await page.$("p ::-p-text(2 JPG and 1 video)")));
+  await runExport("Export 3 slides");
+  const zipBuf = await download("mixed-export-slides.zip");
+  await clickText("Done");
+  const zip = await JSZip.loadAsync(zipBuf);
+  const names = Object.keys(zip.files);
+  ok("mixed project exports one ordered ZIP: photo, video, photo", names.join() === "mixed-export-01.jpg,mixed-export-02.mp4,mixed-export-03.jpg", names.join());
+  const entries = await Promise.all(names.map((n) => zip.files[n].async("nodebuffer")));
+  ok("file types match their names", isJpeg(entries[0]) && isMp4(entries[1]) && isJpeg(entries[2]));
+  ok("the MP4 has an H.264 track and a sound track", hasBox(entries[1], "avc1") && (hasBox(entries[1], "mp4a") || hasBox(entries[1], "Opus")));
+  let mp4 = await inspectVideo(entries[1], "video/mp4", [0, 0.9, 1.1, 1.9]);
+  ok("MP4 has the slide size", mp4.width === 1080 && mp4.height === 1350, `${mp4.width}x${mp4.height}`);
+  ok("MP4 duration matches the slide (2 s)", Math.abs(mp4.duration - 2) < 0.1, String(mp4.duration));
+  ok(
+    "MP4 frames are the slide at that time: red, red, then blue, blue, on the white slide",
+    isRed(mp4.colors[0].center) && isRed(mp4.colors[1].center) && isBlue(mp4.colors[2].center) && isBlue(mp4.colors[3].center) && mp4.colors.every((c) => c.top.every((v) => v > 240)),
+    mp4.colors.map((c) => c.center.slice(0, 3).join("/")).join(" "),
+  );
+
+  // Timeline edits reach the export: trimmed start, 720p, no sound.
+  await click('[data-testid="canvas-host"]').catch(() => {});
+  await click(L("Clip clip"));
+  await setField("Trim start", 1.2);
+  await saved();
+  await clickText("Export");
+  await clickText("Current");
+  await clickText("720p");
+  await clickText("No sound");
+  ok("the dialog shows the smaller size", (await page.$eval('[data-testid="video-summary"]', (n) => n.textContent)).startsWith("720 × 900"));
+  await runExport("Export 1 slide");
+  const single = await download("mixed-export-02.mp4");
+  await clickText("Done");
+  mp4 = await inspectVideo(single, "video/mp4", [0, 0.7]);
+  ok("a single video slide downloads as one MP4 at 720p", isMp4(single) && mp4.width === 720 && mp4.height === 900, `${mp4.width}x${mp4.height}`);
+  ok("trim reaches the export: 0.8 s long and blue from the first frame", Math.abs(mp4.duration - 0.8) < 0.1 && isBlue(mp4.colors[0].center) && isBlue(mp4.colors[1].center), `${mp4.duration} ${mp4.colors[0].center}`);
+  ok("choosing no sound leaves the sound track out", !hasBox(single, "mp4a") && !hasBox(single, "Opus"));
+
+  // A split clip exports as one continuous video.
+  await setField("Trim start", 0);
+  await saved();
+  await seekTo(0.5);
+  await sleep(200);
+  await click(L("Split clip at playhead"));
+  await saved();
+  await clickText("Export");
+  await clickText("Current");
+  await runExport("Export 1 slide");
+  mp4 = await inspectVideo(await download("mixed-export-02.mp4"), "video/mp4", [0.5, 0.95, 1.05, 1.5]);
+  await clickText("Done");
+  ok(
+    "a split clip exports seamlessly across the cut",
+    Math.abs(mp4.duration - 2) < 0.1 && isRed(mp4.colors[0].center) && isRed(mp4.colors[1].center) && isBlue(mp4.colors[2].center) && isBlue(mp4.colors[3].center),
+    `${mp4.duration} ${mp4.colors.map((c) => c.center.slice(0, 3).join("/")).join(" ")}`,
+  );
+
+  // ---------- C4: background music ----------
+  const slide2 = async () => (await readDoc()).slides[1];
+  /** Loudness (RMS) of slices of the sound in an exported file, decoded in the browser. */
+  const loudness = (buf, slices) =>
+    page.evaluate(
+      async (b64, parts) => {
+        const data = await (await fetch(`data:video/mp4;base64,${b64}`)).arrayBuffer();
+        const audio = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data);
+        const ch = audio.getChannelData(0);
+        return parts.map(([from, to]) => {
+          let sum = 0;
+          const a = Math.floor(from * audio.sampleRate);
+          const b = Math.min(ch.length, Math.floor(to * audio.sampleRate));
+          for (let i = a; i < b; i++) sum += ch[i] * ch[i];
+          return Math.sqrt(sum / Math.max(1, b - a));
+        });
+      },
+      Buffer.from(buf).toString("base64"),
+      slices,
+    );
+  // Silence the clips so that everything heard in the export is the music.
+  for (const name of ["Clip clip", "Clip clip (2)"]) {
+    await click(L(name));
+    await click("label ::-p-text(Mute)");
+  }
+  await saved();
+  ok("both clips are muted", (await slide2()).elements.filter((e) => e.type === "video").every((e) => e.muted));
+
+  await (await page.$('[data-testid="music-input"]')).uploadFile(`${FIXTURES}/fake.mp3`);
+  await page.waitForSelector('[data-testid="music-controls"] [role="alert"] ::-p-text(not a supported music file)');
+  ok("a text file disguised as .mp3 is rejected", (await slide2()).audio === undefined);
+  await (await page.$('[data-testid="music-input"]')).uploadFile(`${FIXTURES}/music.wav`);
+  await page.waitForSelector('[data-testid="music-bar"]');
+  await saved();
+  doc = await readDoc();
+  const song = doc.assets.find((a) => a.mime === "audio/wav");
+  let track = doc.slides[1].audio;
+  ok("music becomes the slide's track and plays the whole file", !!song && Math.abs(song.duration - 3) < 0.1 && track?.assetId === song.id && track.start === 0 && track.trimStart === 0 && Math.abs(track.trimEnd - 3) < 0.1 && !track.loop, JSON.stringify(track));
+  const storedPeaks = await page.evaluate(
+    (id) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open("creative-carousel-studio");
+        req.onsuccess = () => {
+          const get = req.result.transaction("assets").objectStore("assets").get(id);
+          get.onsuccess = () => resolve({ type: get.result.blob.type, bars: get.result.peaks?.length ?? 0, max: Math.max(...(get.result.peaks ?? [0])) });
+        };
+      }),
+    song.id,
+  );
+  ok("the original file and a waveform are stored", storedPeaks.type === "audio/wav" && storedPeaks.bars === 240 && storedPeaks.max > 0.05, JSON.stringify(storedPeaks));
+  const bar = await page.$eval('[data-testid="music-bar"]', (n) => ({ start: +n.dataset.start, length: +n.dataset.length }));
+  const drawn = await page.$eval('[data-testid="music-waveform"]', (c) => c.dataset.hasPeaks === "yes" && c.getContext("2d").getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v > 0));
+  ok("timeline shows the music as a bar cut at the end of the slide, with its waveform", bar.start === 0 && Math.abs(bar.length - 2) < 0.1 && drawn, JSON.stringify(bar));
+  ok("music is not listed as a photo", !(await page.$(L("Add music.wav"))) && !(await page.$('aside[aria-label="Insert"] ::-p-text(Missing)')));
+
+  await setField("Fade in", 1);
+  await saved();
+  ok("fade in is stored", (await slide2()).audio.fadeIn === 1);
+  await click(L("Play slide"));
+  ok("a slide with music still plays to its end", (await waitState("playing", 2000)).done && (await waitState("stopped")).done);
+
+  await clickText("Export");
+  await clickText("Current");
+  await runExport("Export 1 slide");
+  let withMusic = await download("mixed-export-02.mp4");
+  await clickText("Done");
+  let levels = await loudness(withMusic, [[0.02, 0.2], [1.2, 1.8]]);
+  ok("exported video carries the music (clips are muted)", (hasBox(withMusic, "mp4a") || hasBox(withMusic, "Opus")) && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
+  ok("with the fade in: quiet at the start, full after one second", levels[0] < levels[1] * 0.35, levels.map((v) => v.toFixed(4)).join(" "));
+
+  // Start the music one second into the slide: the first second of the export is silent.
+  await dragBy('[data-testid="music-bar"]', (await ruler()).width / 2);
+  await saved();
+  track = (await slide2()).audio;
+  ok("dragging the music bar moves it in time", Math.abs(track.start - 1) < 0.08, String(track.start));
+  await setField("Fade in", 0);
+  await saved();
+  await clickText("Export");
+  await clickText("Current");
+  await runExport("Export 1 slide");
+  withMusic = await download("mixed-export-02.mp4");
+  await clickText("Done");
+  levels = await loudness(withMusic, [[0.1, 0.8], [1.3, 1.9]]);
+  ok("the export is silent until the music starts", levels[0] < 0.003 && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
+
+  await click(L("Remove music"));
+  await saved();
+  ok("music can be removed", (await slide2()).audio === undefined && !(await page.$('[data-testid="music-row"]')));
+  await page.keyboard.down("Control");
+  await page.keyboard.press("z");
+  await page.keyboard.up("Control");
+  await saved();
+  ok("and removing it is undoable", (await slide2()).audio?.assetId === song.id && !!(await page.$('[data-testid="music-row"]')));
+  await click(L("Remove music"));
+  await saved();
+  // MP3 is recognised by its own signature.
+  await (await page.$('[data-testid="music-input"]')).uploadFile(`${FIXTURES}/music.mp3`);
+  await page.waitForSelector('[data-testid="music-bar"]');
+  await saved();
+  doc = await readDoc();
+  ok("MP3 is imported by signature with its length", doc.assets.some((a) => a.mime === "audio/mpeg" && Math.abs(a.duration - 3) < 0.2) && doc.schemaVersion === 5);
+  await click(L("Remove music"));
+  await saved();
+  const mixedUrl = page.url();
+
+  // Without WebCodecs the slide is recorded in real time instead, and the dialog says so.
+  const old = await browser.newPage();
+  await old.setViewport({ width: 1440, height: 900 });
+  old.on("pageerror", (e) => pageErrors.push(`[no webcodecs] ${e}`));
+  await old.evaluateOnNewDocument(() => {
+    delete globalThis.VideoEncoder;
+    delete globalThis.AudioEncoder;
+  });
+  await (await old.createCDPSession()).send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: DL });
+  await old.goto(mixedUrl, { waitUntil: "networkidle0" });
+  await old.waitForSelector('[data-testid="canvas-host"] canvas');
+  await (await old.waitForSelector('ol[aria-label="Slides"] > li:nth-child(2) button')).click();
+  await old.bringToFront();
+  await (await old.waitForSelector("button ::-p-text(Export)", { visible: true })).click();
+  await (await old.waitForSelector("button ::-p-text(Current)", { visible: true })).click();
+  await old.waitForFunction(() => document.querySelector('[data-testid="video-note"]')?.textContent.includes("real time"), { timeout: 10000 }).catch(() => {});
+  const fallbackNote = await old.$eval('[data-testid="video-note"]', (n) => n.textContent);
+  ok("without WebCodecs the dialog announces a real-time recording without sound", /recorded in real time as (MP4|WebM), without sound/.test(fallbackNote), fallbackNote);
+  const recStart = Date.now();
+  await (await old.waitForSelector("button ::-p-text(Export 1 slide)")).click();
+  await old.waitForSelector('[data-testid="export-done"]', { timeout: 60000 });
+  const recSeconds = (Date.now() - recStart) / 1000;
+  const recName = fs.readdirSync(DL).find((f) => f.startsWith("mixed-export-02.")) ?? (await sleep(1500), fs.readdirSync(DL).find((f) => f.startsWith("mixed-export-02.")));
+  const rec = await download(recName);
+  const recorded = await inspectVideo(rec, recName.endsWith(".mp4") ? "video/mp4" : "video/webm", [0.3, 1.6], old);
+  ok("the fallback records a playable file of the slide", recorded.width === 1080 && recorded.height === 1350 && isRed(recorded.colors[0].center) && isBlue(recorded.colors[1].center), `${recName} ${recorded.width}x${recorded.height} ${recorded.colors.map((c) => c.center.slice(0, 3).join("/")).join(" ")}`);
+  ok("in about the time the slide plays", recSeconds > 1.8 && Math.abs(recorded.duration - 2) < 0.6, `${recSeconds.toFixed(1)} s, file ${recorded.duration}`);
+  await old.close();
+  await page.bringToFront();
+
   // ---------- A browser that loads no frame until asked (iOS Safari), simulated ----------
   // On iOS a <video> that is not playing stops at its metadata: no "loadeddata", readyState 1,
   // until something seeks it or plays it. Chrome is made to behave the same way here.
@@ -366,7 +784,7 @@ try {
 
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (e) {
-  console.error("ABORTED:", e.message?.split("\n")[0]);
+  console.error("ABORTED:", e.message?.split("\n")[0], "\n", (e.stack || "").split("\n").filter((l) => l.includes("e2e-phase3")).slice(0, 3).join("\n"));
   await page.screenshot({ path: `${SHOTS}/p3-failure.png` }).catch(() => {});
   results.push({ name: "run completed", pass: false });
   if (pageErrors.length) console.error("page errors:", pageErrors.slice(0, 5));

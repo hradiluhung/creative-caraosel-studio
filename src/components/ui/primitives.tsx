@@ -116,6 +116,7 @@ export function NumberField({
   step = 1,
   decimals = 0,
   prefix,
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -125,6 +126,7 @@ export function NumberField({
   step?: number;
   decimals?: number;
   prefix?: string;
+  disabled?: boolean;
 }) {
   const format = (n: number) => String(Number(n.toFixed(decimals)));
   const [draft, setDraft] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export function NumberField({
       <input
         aria-label={label}
         title={label}
+        disabled={disabled}
         inputMode="decimal"
         value={draft ?? format(value)}
         onFocus={(e) => e.target.select()}

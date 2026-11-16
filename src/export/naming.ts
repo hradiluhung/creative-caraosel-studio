@@ -17,10 +17,14 @@ export function slugify(name: string): string {
   return slug || "carousel";
 }
 
-/** carousel-01.jpg ... zero padded so files sort in slide order everywhere. */
-export function slideFileName(projectName: string, slideIndex: number, totalSlides: number, format: ImageFormat) {
+/** carousel-01.jpg, carousel-02.mp4 ... zero padded so files sort in slide order everywhere. */
+export function slideFileNameWithExt(projectName: string, slideIndex: number, totalSlides: number, ext: string) {
   const digits = Math.max(2, String(totalSlides).length);
-  return `${slugify(projectName)}-${String(slideIndex + 1).padStart(digits, "0")}.${FORMAT_INFO[format].ext}`;
+  return `${slugify(projectName)}-${String(slideIndex + 1).padStart(digits, "0")}.${ext}`;
+}
+
+export function slideFileName(projectName: string, slideIndex: number, totalSlides: number, format: ImageFormat) {
+  return slideFileNameWithExt(projectName, slideIndex, totalSlides, FORMAT_INFO[format].ext);
 }
 
 export function zipFileName(projectName: string) {

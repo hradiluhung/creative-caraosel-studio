@@ -16,4 +16,6 @@ export const canvasApi: {
   togglePlayback: () => void;
   /** Stop playback and show the poster frames again. */
   stopPlayback: () => void;
-} = { fit: noop, focusSlide: noop, zoomBy: noop, zoomTo: noop, togglePlayback: noop, stopPlayback: noop };
+  /** Move the playhead (slide seconds). Playback is paused there and the canvas shows that frame. */
+  seek: (seconds: number) => void;
+} = { fit: noop, focusSlide: noop, zoomBy: noop, zoomTo: noop, togglePlayback: noop, stopPlayback: noop, seek: noop };

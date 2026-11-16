@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 const finite = z.number().refine(Number.isFinite, "must be finite");
 const hexColor = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "expected #RRGGBB or #RRGGBBAA");
@@ -102,6 +102,8 @@ export const imageElementSchema = z.object({
   borderWidth: z.number().min(0),
 });
 
+/** Upper bound for a manually set slide duration and for a clip's start time. */
+export const MAX_SLIDE_SECONDS = 600;
 export const PLAYBACK_RATE_MIN = 0.25;
 export const PLAYBACK_RATE_MAX = 4;
 
@@ -114,6 +116,8 @@ export const videoElementSchema = z
     ...baseElement,
     type: z.literal("video"),
     assetId: z.string().min(1),
+    /** Slide time (seconds) at which the clip begins. The clip is only on screen while it plays. */
+    start: z.number().min(0).max(MAX_SLIDE_SECONDS),
     /** First and last moment of the source that are played. trimEnd is always after trimStart. */
     trimStart: z.number().min(0),
     trimEnd: z.number().positive(),
@@ -205,8 +209,29 @@ const elementList = z.array(elementSchema).superRefine((els, ctx) => {
   }
 });
 
-/** Upper bound for a manually set slide duration. */
-export const MAX_SLIDE_SECONDS = 600;
+/** Longest fade the editor offers, in seconds. */
+export const MAX_FADE_SECONDS = 10;
+
+/**
+ * Background music of a slide. It plays next to the sound of the slide's video clips, from
+ * `start` on the slide, and only exists on slides that contain video (a slide without video
+ * is a still image and has no duration).
+ */
+export const audioTrackSchema = z
+  .object({
+    assetId: z.string().min(1),
+    /** Slide time (seconds) at which the music begins. */
+    start: z.number().min(0).max(MAX_SLIDE_SECONDS),
+    /** Part of the audio file that is played, in seconds inside the file. */
+    trimStart: z.number().min(0),
+    trimEnd: z.number().positive(),
+    volume: z.number().min(0).max(1),
+    fadeIn: z.number().min(0).max(MAX_FADE_SECONDS),
+    fadeOut: z.number().min(0).max(MAX_FADE_SECONDS),
+    /** Repeat the trimmed part until the slide ends. */
+    loop: z.boolean(),
+  })
+  .refine((t) => t.trimEnd > t.trimStart, { message: "trimEnd must be after trimStart", path: ["trimEnd"] });
 
 export const slideSchema = z.object({
   id: z.string().min(1),
@@ -215,16 +240,18 @@ export const slideSchema = z.object({
   elements: elementList,
   /** Seconds. Unset means "as long as the longest video clip on the slide". */
   duration: z.number().positive().max(MAX_SLIDE_SECONDS).optional(),
+  audio: audioTrackSchema.optional(),
 });
 
 export const assetRefSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   mime: z.string(),
-  width: z.number().positive(),
-  height: z.number().positive(),
+  /** Pixels. 0 for audio assets, which have no picture. */
+  width: z.number().nonnegative(),
+  height: z.number().nonnegative(),
   size: z.number().nonnegative(),
-  /** Seconds, only present on video assets. */
+  /** Seconds, only present on video and audio assets. */
   duration: z.number().positive().optional(),
 });
 
@@ -265,6 +292,7 @@ export type BlendMode = z.infer<typeof blendModeSchema>;
 export type ShapeKind = z.infer<typeof shapeKindSchema>;
 export type DesignElement = z.infer<typeof elementSchema>;
 export type Slide = z.infer<typeof slideSchema>;
+export type AudioTrack = z.infer<typeof audioTrackSchema>;
 export type AssetRef = z.infer<typeof assetRefSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectMode = Project["mode"];
@@ -290,6 +318,10 @@ export const NEUTRAL_ADJUSTMENTS: Adjustments = {
 
 export function isNeutral(a: Adjustments): boolean {
   return (Object.keys(NEUTRAL_ADJUSTMENTS) as Array<keyof Adjustments>).every((k) => a[k] === 0);
+}
+
+export function isAudioAsset(asset: Pick<AssetRef, "mime">): boolean {
+  return asset.mime.startsWith("audio/");
 }
 
 export function isVideoAsset(asset: Pick<AssetRef, "mime">): boolean {

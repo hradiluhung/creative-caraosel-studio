@@ -5,6 +5,7 @@
  */
 import Konva from "konva";
 import { linearGradientPoints, type Surface } from "@/document/geometry";
+import { clipActive } from "@/document/timing";
 import type {
   Background,
   BlendMode,
@@ -46,6 +47,8 @@ export interface BuildOptions {
    * Undefined draws every video's poster frame: thumbnails, image exports, the idle editor.
    */
   videoTime?: number;
+  /** Pixels per document pixel for video frames only (defaults to `quality`). Playback lowers it to screen size. */
+  videoQuality?: number;
 }
 
 // --- Text -------------------------------------------------------------------
@@ -180,14 +183,22 @@ const frameBorder = (el: Framed): Konva.ShapeConfig => ({
 });
 
 function videoFrameOptions(opts: BuildOptions) {
-  return { quality: opts.quality, maxSide: opts.maxImageSide, time: opts.videoTime };
+  return { quality: opts.videoQuality ?? opts.quality, maxSide: opts.maxImageSide, time: opts.videoTime };
 }
 
 function videoNodes(el: VideoElement, res: RenderResources, opts: BuildOptions): Konva.Shape[] {
   const frame = res.getVideoFrame(el, videoFrameOptions(opts));
   // Same construction as photos: the frame is the pattern fill of the mask outline, so border
   // and shadow follow any mask shape. Without a frame yet (still decoding) it is a neutral box.
-  return [maskOutline(el, { name: VIDEO_FRAME_NAME, ...(frame ? frameFill(el, frame) : { fill: "#dcdad5" }), ...frameBorder(el) })];
+  return [
+    maskOutline(el, {
+      name: VIDEO_FRAME_NAME,
+      // At a slide time, a clip is only on screen while it plays (poster mode shows every clip).
+      visible: opts.videoTime === undefined || clipActive(el, opts.videoTime),
+      ...(frame ? frameFill(el, frame) : { fill: "#dcdad5" }),
+      ...frameBorder(el),
+    }),
+  ];
 }
 
 /**
@@ -199,6 +210,9 @@ export function refreshVideoFrames(root: Konva.Container, elements: DesignElemen
   for (const node of root.find<Konva.Shape>(`.${VIDEO_FRAME_NAME}`)) {
     const el = byId.get(node.getParent()?.id() ?? "");
     if (el?.type !== "video") continue;
+    const active = opts.videoTime === undefined || clipActive(el, opts.videoTime);
+    if (node.visible() !== active) node.visible(active);
+    if (!active) continue;
     const frame = res.getVideoFrame(el, videoFrameOptions(opts));
     // Setting the attributes again, even to the same canvas, makes Konva rebuild the pattern.
     if (frame) node.setAttrs({ fill: undefined, ...frameFill(el, frame) });

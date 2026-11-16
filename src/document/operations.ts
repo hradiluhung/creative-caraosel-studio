@@ -5,7 +5,8 @@
 import { createId } from "./ids";
 import { createSlide } from "./factory";
 import { PANORAMA_ID } from "./geometry";
-import { MAX_SLIDES, type AssetRef, type Background, type DesignElement, type Project, type Slide } from "./schema";
+import { splitClip } from "./timing";
+import { MAX_SLIDE_SECONDS, MAX_SLIDES, type AssetRef, type AudioTrack, type Background, type DesignElement, type Project, type Slide } from "./schema";
 
 type Container = { background: Background; elements: DesignElement[] };
 
@@ -73,6 +74,47 @@ export function duplicateElements(project: Project, surfaceId: string, ids: stri
   const source = getElements(project, surfaceId).filter((el) => set.has(el.id));
   const copies = cloneElements(source, offset).map((el) => ({ ...el, locked: false }));
   return { project: addElements(project, surfaceId, copies), newIds: copies.map((c) => c.id) };
+}
+
+/**
+ * Cut a video clip in two at a slide time. The second half is a copy that starts where the
+ * first one ends and sits directly above it. Returns the new element's id, or null when the
+ * time is not inside the clip.
+ */
+export function splitVideo(project: Project, surfaceId: string, id: string, slideTime: number, newId = createId()) {
+  const elements = getElements(project, surfaceId);
+  const index = elements.findIndex((el) => el.id === id);
+  const el = elements[index];
+  const cut = el?.type === "video" ? splitClip(el, slideTime) : null;
+  if (!el || el.type !== "video" || !cut) return { project, newId: null };
+  const first = { ...el, ...cut.first };
+  const second = { ...el, ...cut.second, id: newId, name: `${el.name} (2)` };
+  const next = mapContainer(project, surfaceId, (c) => ({ ...c, elements: [...c.elements.slice(0, index), first, second, ...c.elements.slice(index + 1)] }));
+  return { project: next, newId };
+}
+
+/** Set a slide's length in seconds, or pass undefined to follow its clips again. */
+export function setSlideDuration(project: Project, slideId: string, duration: number | undefined): Project {
+  const slides = project.slides.map((s) => {
+    if (s.id !== slideId || s.duration === duration) return s;
+    const { duration: _old, ...rest } = s;
+    void _old;
+    return duration === undefined ? rest : { ...rest, duration: Math.min(Math.max(duration, 0.1), MAX_SLIDE_SECONDS) };
+  });
+  return slides.some((s, i) => s !== project.slides[i]) ? { ...project, slides } : project;
+}
+
+/** Set, change or (with undefined) remove a slide's background music. */
+export function setSlideAudio(project: Project, slideId: string, audio: AudioTrack | undefined): Project {
+  let changed = false;
+  const slides = project.slides.map((s) => {
+    if (s.id !== slideId || s.audio === audio) return s;
+    changed = true;
+    const { audio: _old, ...rest } = s;
+    void _old;
+    return audio ? { ...rest, audio } : rest;
+  });
+  return changed ? { ...project, slides } : project;
 }
 
 export type ReorderDirection = "forward" | "backward" | "front" | "back";
@@ -169,7 +211,10 @@ export function usedAssetIds(project: Project): Set<string> {
     for (const el of els) if ((el.type === "image" || el.type === "video") && el.assetId) ids.add(el.assetId);
   };
   scan(project.panorama.elements);
-  project.slides.forEach((s) => scan(s.elements));
+  project.slides.forEach((s) => {
+    scan(s.elements);
+    if (s.audio) ids.add(s.audio.assetId);
+  });
   return ids;
 }
 

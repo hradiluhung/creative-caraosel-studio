@@ -9,7 +9,10 @@ import {
   packageZip,
   type ExportedFile,
 } from "@/export/exporter";
-import { countPlaceholders, countVideos } from "@/document/operations";
+import { getExportFrames } from "@/document/geometry";
+import { countPlaceholders } from "@/document/operations";
+import { formatSeconds, frameDuration } from "@/document/timing";
+import { detectVideoSupport, videoBitrate, videoOutputSize, type AudioCodec, type VideoQuality, type VideoResolution, type VideoSupport } from "@/export/videoSupport";
 import { FORMAT_INFO, zipFileName, type ImageFormat } from "@/export/naming";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
@@ -17,7 +20,7 @@ import { Button, Dialog, Label, Segmented, Slider } from "../ui/primitives";
 
 type Phase =
   | { kind: "idle" }
-  | { kind: "running"; done: number; total: number }
+  | { kind: "running"; done: number; total: number; detail?: string }
   | { kind: "done"; files: ExportedFile[]; zip: Blob | null }
   | { kind: "error"; message: string };
 
@@ -29,16 +32,42 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
   const [scale, setScale] = useState<"1" | "2">("1");
   const [range, setRange] = useState<"all" | "current">("all");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [videoMode, setVideoMode] = useState<"video" | "still">("video");
+  const [resolution, setResolution] = useState<"720" | "1080">("1080");
+  const [videoQuality, setVideoQuality] = useState<VideoQuality>("standard");
+  const [soundChoice, setSound] = useState<AudioCodec | "none" | null>(null);
+  const [support, setSupport] = useState<VideoSupport | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // What this device can really produce, for the chosen video size.
+  const sizeKey = project ? `${project.width}x${project.height}@${resolution}` : "";
+  useEffect(() => {
+    if (!sizeKey) return;
+    let live = true;
+    const [dims, res] = sizeKey.split("@");
+    const [w, h] = dims.split("x").map(Number);
+    void detectVideoSupport(videoOutputSize(w, h, Number(res) as VideoResolution)).then((s) => live && setSupport(s));
+    return () => {
+      live = false;
+    };
+  }, [sizeKey]);
+
   if (!project) return null;
 
   const placeholders = countPlaceholders(project);
-  const videoLayers = countVideos(project);
+  const frames = getExportFrames(project);
   const canDouble = maxPixelRatio(project.width, project.height) >= 2;
   const pixelRatio = Number(scale);
   const indices = range === "all" ? project.slides.map((_, i) => i) : [focusIndex];
+  const videoSlides = indices.filter((i) => frames[i] && frameDuration(project, frames[i]) > 0);
+  const videoSeconds = videoSlides.reduce((sum, i) => sum + frameDuration(project, frames[i]), 0);
+  const asVideo = videoSlides.length > 0 && videoMode === "video";
+  const videoSize = videoOutputSize(project.width, project.height, Number(resolution) as VideoResolution);
+  const sound: AudioCodec | null = soundChoice === "none" ? null : (soundChoice ?? support?.audio[0] ?? null);
+  const cannotExportVideo = asVideo && support !== null && !support.mp4 && !support.recorder;
+  const stillSlides = indices.length - (asVideo ? videoSlides.length : 0);
 
   const deliver = (files: ExportedFile[], zip: Blob | null) => {
     if (zip) downloadBlob(zip, zipFileName(project.name));
@@ -55,8 +84,9 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
         quality,
         scale: pixelRatio,
         slideIndices: indices,
+        video: { mode: videoMode, resolution: Number(resolution) as VideoResolution, quality: videoQuality, audio: sound },
         signal: controller.signal,
-        onProgress: (done, total) => setPhase({ kind: "running", done, total }),
+        onProgress: (done, total, detail) => setPhase({ kind: "running", done, total, detail }),
       });
       const zip = files.length > 1 ? await packageZip(files, controller.signal) : null;
       setPhase({ kind: "done", files, zip });
@@ -112,7 +142,7 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
-            <Button variant="primary" onClick={run}>
+            <Button variant="primary" onClick={run} disabled={cannotExportVideo || (asVideo && support === null)}>
               Export {indices.length} {indices.length === 1 ? "slide" : "slides"}
             </Button>
           </>
@@ -121,6 +151,90 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
     >
       <div className="space-y-4">
         <fieldset disabled={running || phase.kind === "done"} className="space-y-4 disabled:opacity-50">
+          {videoSlides.length > 0 && (
+            <div className="space-y-2 rounded-md border border-line p-3" data-testid="video-export">
+              <div className="space-y-1.5">
+                <Label>
+                  {videoSlides.length === 1 ? "1 slide has video" : `${videoSlides.length} slides have video`} ({formatSeconds(videoSeconds)})
+                </Label>
+                <Segmented
+                  label="Video slides"
+                  value={videoMode}
+                  onChange={setVideoMode}
+                  options={[
+                    { value: "video", label: "Video file" },
+                    { value: "still", label: "Still image" },
+                  ]}
+                />
+              </div>
+              {videoMode === "video" ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Video size</Label>
+                    <Segmented
+                      label="Video size"
+                      value={resolution}
+                      onChange={setResolution}
+                      options={[
+                        { value: "720", label: "720p" },
+                        { value: "1080", label: "1080p" },
+                      ]}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Video quality</Label>
+                    <Segmented
+                      label="Video quality"
+                      value={videoQuality}
+                      onChange={setVideoQuality}
+                      options={[
+                        { value: "small", label: "Small" },
+                        { value: "standard", label: "Standard" },
+                        { value: "high", label: "High" },
+                      ]}
+                    />
+                    <p className="text-xs text-muted" data-testid="video-summary">
+                      {videoSize.width} × {videoSize.height}, 30 fps, about {(videoBitrate(videoSize, videoQuality) / 1e6).toFixed(1)} Mbit/s. One file per slide.
+                    </p>
+                  </div>
+                  {support?.mp4 && support.audio.length > 0 && (
+                    <div className="space-y-1.5">
+                      <Label>Sound</Label>
+                      <Segmented
+                        label="Sound"
+                        value={sound ?? "none"}
+                        onChange={setSound}
+                        options={[
+                          ...support.audio.map((codec) => ({ value: codec, label: codec === "aac" ? "AAC" : "Opus" })),
+                          { value: "none" as const, label: "No sound" },
+                        ]}
+                      />
+                    </div>
+                  )}
+                  <p role="note" data-testid="video-note" className="rounded-md bg-sunken px-3 py-2 text-xs">
+                    {support === null
+                      ? "Checking what this device can export…"
+                      : support.mp4
+                        ? support.audio.length === 0
+                          ? "MP4 (H.264). This browser cannot encode sound, so the video will be silent."
+                          : sound === "opus"
+                            ? "MP4 (H.264) with Opus sound. Opus plays in Chrome and Firefox, but Instagram and the iPhone Photos app expect AAC, which this browser cannot encode."
+                            : sound === "aac"
+                              ? "MP4 (H.264) with AAC sound. Clips that are sped up or slowed down change pitch in the export."
+                              : "MP4 (H.264) without sound."
+                        : support.recorder
+                          ? `This browser cannot encode MP4 directly. Each video slide is recorded in real time as ${support.recorder.ext === "mp4" ? "MP4" : "WebM"}, without sound, and takes as long as it plays. Keep this tab in front while it records.`
+                          : "This browser can neither encode nor record video. Choose Still image to export the poster frames."}
+                  </p>
+                </>
+              ) : (
+                <p role="note" data-testid="video-warning" className="rounded-md bg-sunken px-3 py-2 text-xs">
+                  Video layers are exported as a still image of their poster frame.
+                </p>
+              )}
+            </div>
+          )}
+          {stillSlides > 0 && videoSlides.length > 0 && asVideo && <p className="text-xs text-muted">The settings below apply to the {stillSlides} still {stillSlides === 1 ? "slide" : "slides"}.</p>}
           <div className="space-y-1.5">
             <Label>Format</Label>
             <Segmented
@@ -165,8 +279,12 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
             />
             <p className="text-xs text-muted">
               {indices.length > 1
-                ? `One ZIP with ${indices.length} numbered ${info.label} files, in slide order.`
-                : `One ${info.label} file.`}
+                ? asVideo
+                  ? `One ZIP with ${indices.length} numbered files in slide order: ${stillSlides} ${info.label} and ${videoSlides.length} video.`
+                  : `One ZIP with ${indices.length} numbered ${info.label} files, in slide order.`
+                : asVideo
+                  ? "One video file."
+                  : `One ${info.label} file.`}
               {project.mode === "seamless" && " The panorama is sliced exactly at the slide boundaries."}
             </p>
           </div>
@@ -177,26 +295,22 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
             {placeholders} empty photo {placeholders === 1 ? "frame is" : "frames are"} still waiting for a photo. Empty frames are left out of the export.
           </p>
         )}
-        {videoLayers > 0 && phase.kind === "idle" && (
-          <p role="note" data-testid="video-warning" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
-            This project has {videoLayers} video {videoLayers === 1 ? "layer" : "layers"}. Video export (MP4) is not built yet, so {videoLayers === 1 ? "it is" : "they are"} exported
-            as a still image of the poster frame.
-          </p>
-        )}
         {running && (
           <div role="status" aria-live="polite" className="space-y-1.5">
             <div className="h-1.5 overflow-hidden rounded-full bg-sunken">
               <div className="h-full bg-ink transition-[width]" style={{ width: `${(phase.done / phase.total) * 100}%` }} />
             </div>
-            <p className="text-xs text-muted">
-              Rendering slide {Math.min(phase.done + 1, phase.total)} of {phase.total}…
+            <p className="text-xs text-muted" data-testid="export-progress">
+              {phase.detail ?? `Rendering slide ${Math.min(Math.floor(phase.done) + 1, phase.total)} of ${phase.total}`}…
             </p>
           </div>
         )}
         {phase.kind === "done" && (
           <p role="status" data-testid="export-done" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
-            Exported {phase.files.length} {phase.files.length === 1 ? "file" : "files"} at {phase.files[0].width} × {phase.files[0].height} px. The
-            download has started.
+            Exported {phase.files.length} {phase.files.length === 1 ? "file" : "files"}
+            {phase.files.every((f) => f.kind === "image") ? ` at ${phase.files[0].width} × ${phase.files[0].height} px` : `: ${phase.files.map((f) => f.name.split(".").pop()).join(", ")}`}. The download
+            has started.
+            {phase.files.some((f) => f.kind === "video" && !f.hasAudio) && " The video has no sound."}
           </p>
         )}
         {phase.kind === "error" && (

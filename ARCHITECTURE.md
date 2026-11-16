@@ -39,9 +39,10 @@ src/
   app/                    routes: / (dashboard), /editor?id=…, manifest, global styles, font faces
   document/               schema.ts  geometry.ts  factory.ts  operations.ts  migrations.ts  ids.ts  timing.ts (video time model)
   render/                 scene.ts (Konva scene builder)  resources.ts (image cache)  fonts.ts  shapes.ts
-                          videoPool.ts (playing videos, poster frames)  videoDom.ts
+                          videoPool.ts (playing videos, poster frames)  videoDom.ts  musicPlayer.ts
   export/                 exporter.ts (render, verify, zip, download)  naming.ts
-  persistence/            db.ts (IndexedDB)  assets.ts (import + validation)  video.ts  videoSniff.ts
+                          video.ts (MP4 per slide)  frameSource.ts (decoded frames)  videoSupport.ts
+  persistence/            db.ts (IndexedDB)  assets.ts (import + validation)  video.ts  audio.ts  videoSniff.ts
   store/                  editorStore.ts
   components/
     ui/                   small design-system primitives (button, fields, dialog, sheet, menu)
@@ -159,13 +160,15 @@ IndexedDB database `creative-carousel-studio` (via `idb`):
 | zod | document validation |
 | idb | promise wrapper for IndexedDB |
 | jszip | ZIP packaging of exports |
+| mp4-muxer | writes the MP4 container for video exports |
+| mediabunny | reads and decodes source videos frame by frame for export |
 | lucide-react | icons |
 | @fontsource/* | self-hosted font files |
 | vitest, fake-indexeddb, puppeteer-core (dev) | unit and end-to-end tests |
 
 Not used yet, on purpose: **shadcn/ui** (the handful of primitives needed are in
 `src/components/ui`; shadcn components can replace them later without touching the editor),
-**react-konva** (see section 5), **Supabase**, **FFmpeg.wasm / WebCodecs** (Phase 3, video export).
+**react-konva** (see section 5), **Supabase**, **FFmpeg.wasm** (WebCodecs does the encoding in Phase 3; no WebAssembly encoder is shipped).
 
 ## 9. Phase 1 checklist
 
@@ -252,16 +255,19 @@ stickers, overlays, text effects, custom font upload surviving a reload, a rejec
 brand kit with custom font and logo, template preview and use, filling a placeholder, and saving a
 project as a template.
 
-## 12. Phase 3: video (in progress)
+## 12. Phase 3: video
 
-`PHASE3_PLAN.md` is the working plan and progress log. Done so far: **C1, video as an element.**
-Timeline, MP4 export and audio tracks are not built yet.
+`PHASE3_PLAN.md` is the working plan and progress log. All four checkpoints are implemented: **C1 video as
+an element, C2 the timeline, C3 video export, C4 background music and polish.** Verified in desktop
+Chrome; see the plan for what still needs a real phone.
 
-Schema version 3 (migration `2 -> 3` only bumps the version):
+Schema version 3 (migration `2 -> 3` only bumps the version), then version 4 (`3 -> 4` gives every
+clip `start: 0`) and version 5 (`4 -> 5`, optional `Slide.audio`):
 
-- New element type `video`: `assetId`, `trimStart`, `trimEnd`, `volume`, `muted`, `playbackRate`,
+- New element type `video`: `assetId`, `start`, `trimStart`, `trimEnd`, `volume`, `muted`, `playbackRate`,
   `loop`, `posterTime`, plus the frame styling images have (`mask`, `cornerRadius`, flips, border).
-- `Slide.duration` (seconds, optional) and `AssetRef.duration` (video assets).
+- `Slide.duration` (seconds, optional) and `AssetRef.duration` (video and audio assets).
+- `Slide.audio`: background music with `start`, trim, `volume`, `fadeIn`, `fadeOut`, `loop`.
 
 Decisions:
 
@@ -277,10 +283,18 @@ Decisions:
 - **Poster frames are exact.** The frame at `posterTime` is captured by seeking a temporary `<video>`
   and cached; the small JPEG stored with the asset is only the instant fallback while that happens.
   Image exports wait for the exact frame and stop with a clear error if it cannot be read.
-- **The wall clock is the master during playback.** A `Konva.Animation` computes the slide time, asks
-  `VideoPool.sync` to keep each `<video>` in step (it only seeks when a video drifts or loops) and
-  repaints the video nodes in place, without rebuilding the scene. Playback state is session state in
-  the store; it never touches the document.
+- **The video is the master during playback, not the wall clock.** A `Konva.Animation` advances the
+  slide time, `VideoPool.sync` reports how far the leading clip really is and the clock is moved to it;
+  a playing video is only seeked when it is far off. Forcing videos to chase a clock made playback
+  stutter on phones. The canvas repaints when a video presents a frame (`requestVideoFrameCallback`),
+  at a reduced pixel ratio while playing, and the video nodes are repainted in place without
+  rebuilding the scene. Playback state is session state in the store; it never touches the document.
+- **A clip is on screen only while it plays** (`clipActive`): from its `start` until one pass is over,
+  or until the slide ends when it loops. That is what makes split work: the halves are two clips that
+  follow each other. Poster mode (no `videoTime`) still shows every clip.
+- **The timeline is a view of the document.** Every drag is an ordinary operation through `commit()`
+  (coalesced into one undo step), computed by pure helpers in `timing.ts` (`trimClipStart`,
+  `trimClipEnd`, `moveClip`, `splitClip`). Scrubbing only moves the session playhead (`canvasApi.seek`).
 - **Playback starts inside the tap** (`canvasApi.togglePlayback`), because browsers only allow sound
   from a user gesture. If sound is refused anyway, the clip plays muted and the UI says so.
 - **Import is validated like images:** file signature (not extension), `canPlayType`, a real decode to
@@ -288,18 +302,36 @@ Decisions:
 - **Never wait for `loadeddata` alone.** iOS Safari loads no picture data for a video that is not
   playing, so `seekVideo` (`render/videoDom.ts`) asks for a frame by seeking and falls back to a
   moment of muted playback. Import only needs the metadata; the stored poster still is best effort.
+- **Export draws every frame with the scene builder** (`src/export/video.ts`): the slide is built once
+  on an off-screen stage at output size and only the video nodes are refreshed per frame, with
+  `videoTime = frame / 30`. Encoding is WebCodecs H.264 muxed with `mp4-muxer`; frames come from
+  `mediabunny` (demux + `VideoDecoder`, forward only) because seeking a `<video>` per frame is an order
+  of magnitude slower; sound is mixed with `OfflineAudioContext`. Without WebCodecs the slide is
+  recorded in real time with `MediaRecorder`. One file per slide, packaged in slide order; slides are
+  never merged. The dialog reports what the device can really produce (feature detection in
+  `videoSupport.ts`), and each MP4 is reopened to check its size and duration.
+- **Music has one gain curve** (`trackGainAt` in `timing.ts`): the preview (`render/musicPlayer.ts`, an
+  `<audio>` element kept in step with the clock) and the export (`mixAudio`, linear ramps between the
+  curve's corner points) both follow it.
+- **No filters on video.** The adjustment pipeline is per-pixel JavaScript (about 18 ms per 1080p
+  frame for color, 240 ms with blur, on a desktop core): not real time. Video gets masks, borders,
+  shadows, flips, opacity and blend modes.
 - Live `<video>` elements exist only while a slide is playing or paused and are released on stop,
   because phones allow only a few video decoders at a time.
 
-Verification: 74 unit tests in total; `tests/e2e-phase3.mjs` (48 checks in Chrome) covers import,
-poster frames in editor and export pixels, playback, pause, trim, properties, mask, crop, flip, reload
-and undo.
+Verification: 95 unit tests in total; `tests/e2e-phase3.mjs` (105 checks in Chrome) covers import,
+poster frames in editor and export pixels, playback, pause, trim, properties, mask, crop, flip, reload,
+undo, the timeline (scrub, split, trim, move, zoom, slide length) and video export (mixed ZIP, frame
+content, duration, sound track, fallback) and background music (import, waveform, fades measured in
+the exported sound). `tests/perf-playback.mjs` is a
+rough smoothness measurement for a slow phone.
 
 ## 13. Known limitations (honest list)
 
-- **Video (Phase 3, C1 only):** verified in desktop Chrome and an emulated phone viewport, not on a real
-  iPhone. Video slides export as still images (poster frame); there is no MP4 export, no timeline, no
-  per-clip start offset, no UI for a manual slide duration, no filters on video and no audio tracks yet.
+- **Video (Phase 3):** import was confirmed on an iPhone; playback smoothness there, the timeline, MP4
+  export and music were only verified in desktop Chrome (export with Opus sound; AAC could not be
+  tested there). No filters on video. On iOS the preview ignores volume and fades (the export applies
+  them). Music needs a slide with video; a seamless panorama has no music track.
   Which codecs can be imported depends on the browser (for example HEVC MOV files play in Safari, not
   in every other browser); the import says so instead of failing silently.
 - **Phase 2 was verified in desktop Chrome only.** Phase 1 has been used on an iPhone; the Phase 2

@@ -50,6 +50,20 @@ const MIGRATIONS: Record<number, Migration> = {
   // Version 3 (Phase 3): video elements, optional Slide.duration and AssetRef.duration.
   // Everything new is either a new element type or optional, so old documents only change version.
   2: (doc) => ({ ...doc, schemaVersion: 3 }),
+  // Version 4 (Phase 3, timeline): every video clip gets a start time on its slide.
+  3: (doc) => {
+    const isRecord = (v: unknown): v is RawDoc => typeof v === "object" && v !== null;
+    const withStart = (el: unknown) => (isRecord(el) && el.type === "video" && el.start === undefined ? { ...el, start: 0 } : el);
+    const container = (c: unknown) => (isRecord(c) && Array.isArray(c.elements) ? { ...c, elements: c.elements.map(withStart) } : c);
+    return {
+      ...doc,
+      slides: Array.isArray(doc.slides) ? doc.slides.map(container) : doc.slides,
+      panorama: container(doc.panorama),
+      schemaVersion: 4,
+    };
+  },
+  // Version 5 (Phase 3, audio): optional Slide.audio (background music) and audio assets.
+  4: (doc) => ({ ...doc, schemaVersion: 5 }),
 };
 
 export class DocumentError extends Error {
