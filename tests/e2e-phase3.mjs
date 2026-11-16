@@ -300,6 +300,70 @@ try {
   await waitState("stopped");
   await page.screenshot({ path: `${SHOTS}/p3-02-end.png` });
 
+  // ---------- A browser that loads no frame until asked (iOS Safari), simulated ----------
+  // On iOS a <video> that is not playing stops at its metadata: no "loadeddata", readyState 1,
+  // until something seeks it or plays it. Chrome is made to behave the same way here.
+  const ios = await browser.newPage();
+  await ios.setViewport({ width: 1440, height: 900 });
+  ios.on("pageerror", (e) => pageErrors.push(`[lazy] ${e}`));
+  await ios.evaluateOnNewDocument(() => {
+    const asked = new WeakSet();
+    const proto = HTMLMediaElement.prototype;
+    const readyState = Object.getOwnPropertyDescriptor(proto, "readyState");
+    Object.defineProperty(proto, "readyState", { get() { return asked.has(this) ? readyState.get.call(this) : Math.min(readyState.get.call(this), 1); } });
+    const currentTime = Object.getOwnPropertyDescriptor(proto, "currentTime");
+    Object.defineProperty(proto, "currentTime", { get: currentTime.get, set(v) { asked.add(this); currentTime.set.call(this, v); } });
+    const play = proto.play;
+    proto.play = function () { asked.add(this); return play.call(this); };
+    const createElement = document.createElement.bind(document);
+    document.createElement = (tag, ...rest) => {
+      const el = createElement(tag, ...rest);
+      if (String(tag).toLowerCase() === "video") {
+        for (const type of ["loadeddata", "canplay", "canplaythrough"]) {
+          el.addEventListener(type, (e) => !asked.has(el) && e.stopImmediatePropagation(), true);
+        }
+      }
+      return el;
+    };
+  });
+  await ios.goto(BASE, { waitUntil: "networkidle0" });
+  await (await ios.waitForSelector("button ::-p-text(New project)", { visible: true })).click();
+  await ios.type("#np-name", "Lazy Video");
+  await Promise.all([ios.waitForNavigation({ waitUntil: "networkidle0" }), (await ios.waitForSelector("button ::-p-text(Create project)")).click()]);
+  await ios.waitForSelector('[data-testid="canvas-host"] canvas');
+  const importStarted = Date.now();
+  await (await ios.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/clip.mp4`);
+  const lazy = await until(async () => {
+    const alert = await ios.$eval('[role="alert"]', (n) => n.textContent).catch(() => null);
+    const listed = !!(await ios.$(L("Add video clip.mp4")));
+    return { done: !!alert || listed, alert, listed };
+  }, 40000);
+  const importMs = Date.now() - importStarted;
+  ok("video import works when the browser loads no frame until asked", lazy.listed && !lazy.alert, lazy.alert ?? "");
+  ok("and does not sit in a timeout first", importMs < 6000, `${importMs} ms`);
+  const lazyAsset = await ios.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open("creative-carousel-studio");
+        req.onsuccess = () => {
+          const all = req.result.transaction("assets").objectStore("assets").getAll();
+          all.onsuccess = () => resolve(all.result.filter((a) => a.name === "clip.mp4").map((a) => ({ duration: a.duration, poster: a.poster?.size ?? 0 })).pop());
+        };
+      }),
+  );
+  ok("with duration and a poster still", !!lazyAsset && Math.abs(lazyAsset.duration - 2) < 0.15 && lazyAsset.poster > 200, JSON.stringify(lazyAsset));
+  await sleep(1500);
+  const lazyShot = await ios.screenshot();
+  await decodePng(lazyShot);
+  const hostBox = await (await ios.$('[data-testid="canvas-host"]')).boundingBox();
+  const lazyCenter = await pixel(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2);
+  ok("and its poster frame is drawn on the canvas", isRed(lazyCenter), String(lazyCenter));
+  await (await ios.waitForSelector(L("Play slide"), { visible: true })).click();
+  await sleep(1500);
+  await decodePng(await ios.screenshot());
+  ok("and it plays", isBlue(await pixel(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2)));
+  await ios.close();
+
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (e) {
   console.error("ABORTED:", e.message?.split("\n")[0]);

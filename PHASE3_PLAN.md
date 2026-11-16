@@ -8,7 +8,7 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 
 - Phase 1 and Phase 2 are done, tested and committed-ready (see `ARCHITECTURE.md` sections 9 to 11 and 13).
 - Checks that must stay green: `npm run typecheck`, `npm run lint`, `npm test` (74 tests after C1),
-  `npm run test:e2e` (36 + 28 + 43 browser checks; headers of `tests/e2e*.mjs` explain the setup).
+  `npm run test:e2e` (36 + 28 + 48 browser checks; headers of `tests/e2e*.mjs` explain the setup).
 - Document schema was version 2. C1 bumped it to 3 with a `2 -> 3` migration in
   `src/document/migrations.ts` (never edit old migrations).
 
@@ -105,7 +105,7 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 
 - `npm run typecheck`, `npm run lint`: clean. `npm test`: 74 tests (20 new: schema v3, migration
   2 -> 3, timing, sniffing, poster storage).
-- `tests/e2e-phase3.mjs`: 43 checks in headless Chrome against the production build (import of MP4
+- `tests/e2e-phase3.mjs`: 48 checks in headless Chrome against the production build (import of MP4
   and WebM, rejected fake file, stored poster, poster frame in the editor and in the PNG export at
   the exact poster time, live playback, automatic stop, pause, trim, speed / mute / loop, mask, cover
   crop and flip in pixels, slide change, reload, undo). `tests/e2e.mjs` 36/36 and
@@ -114,8 +114,15 @@ here without the earlier chat. Read `ARCHITECTURE.md` first, then this file. Upd
 
 ### Not verified / decisions the next session should know
 
-- **No real iPhone or Safari run yet.** MOV / HEVC, the autoplay rules for sound and memory with long
-  clips are only handled in code (feature detection, muted retry with a notice), not tested on a device.
+- **First iPhone run (2026-11-16) found a real bug, now fixed:** importing an MP4 waited 20 s and
+  then failed with "cannot be decoded by this browser". Cause: iOS Safari never fires `loadeddata`
+  for a video that is not playing (it stops at the metadata until something seeks or plays it), and
+  the import waited for exactly that event. `seekVideo` in `render/videoDom.ts` now asks for a frame
+  by seeking (and, as a last resort, a moment of muted playback), the poster still is best effort, and
+  the error messages say which step failed. `tests/e2e-phase3.mjs` simulates that browser behaviour in
+  Chrome (it failed with the same message and the same 20 s before the fix). **The fix itself has not
+  been confirmed on the iPhone yet.** MOV / HEVC, the autoplay rules for sound and memory with long
+  clips are still only handled in code, not tested on a device.
 - The "sound was blocked" notice path has no automated test (headless Chrome never blocks it).
 - All clips start at slide time 0. There is no per-clip start offset in the schema yet; C2's "split at
   playhead" needs one (add an optional field with a migration or default, do not reuse `trimStart`).

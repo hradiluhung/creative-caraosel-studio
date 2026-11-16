@@ -285,10 +285,13 @@ Decisions:
   from a user gesture. If sound is refused anyway, the clip plays muted and the UI says so.
 - **Import is validated like images:** file signature (not extension), `canPlayType`, a real decode to
   read size and duration, size and length limits, and a storage estimate check before writing.
+- **Never wait for `loadeddata` alone.** iOS Safari loads no picture data for a video that is not
+  playing, so `seekVideo` (`render/videoDom.ts`) asks for a frame by seeking and falls back to a
+  moment of muted playback. Import only needs the metadata; the stored poster still is best effort.
 - Live `<video>` elements exist only while a slide is playing or paused and are released on stop,
   because phones allow only a few video decoders at a time.
 
-Verification: 74 unit tests in total; `tests/e2e-phase3.mjs` (43 checks in Chrome) covers import,
+Verification: 74 unit tests in total; `tests/e2e-phase3.mjs` (48 checks in Chrome) covers import,
 poster frames in editor and export pixels, playback, pause, trim, properties, mask, crop, flip, reload
 and undo.
 

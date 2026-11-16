@@ -6,7 +6,7 @@
 import { createId } from "@/document/ids";
 import type { AssetRef } from "@/document/schema";
 import { AssetError } from "./assets";
-import { createSilentVideo, once, releaseVideo, seekVideo } from "@/render/videoDom";
+import { createSilentVideo, once, releaseVideo, seekVideo, waitForMetadata } from "@/render/videoDom";
 import { putAsset } from "./db";
 import { sniffVideoType, VIDEO_LABEL } from "./videoSniff";
 
@@ -16,6 +16,8 @@ export const MAX_VIDEO_BYTES = 300 * 1024 * 1024;
 export const MAX_VIDEO_SECONDS = 600;
 const POSTER_MAX_SIDE = 960;
 const LOAD_TIMEOUT_MS = 20_000;
+/** The poster still is a convenience: never let it hold up an import for long. */
+const POSTER_TIMEOUT_MS = 6000;
 
 const mb = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
@@ -31,8 +33,17 @@ export async function probeVideo(blob: Blob, label: string): Promise<VideoProbe>
   const url = URL.createObjectURL(blob);
   const video = createSilentVideo(url);
   try {
-    const cannot = new AssetError(`"${label}" cannot be decoded by this browser. Try an MP4 with H.264 video.`);
-    if (video.readyState < 1 && !(await once(video, "loadedmetadata", LOAD_TIMEOUT_MS))) throw cannot;
+    if (!(await waitForMetadata(video, LOAD_TIMEOUT_MS))) {
+      // MediaError code 4 is "format or codec not supported"; 3 is a decode error in a known format.
+      const code = video.error?.code;
+      throw new AssetError(
+        code === 4
+          ? `This browser cannot play the format or codec of "${label}". Try an MP4 with H.264 video.`
+          : code === 3
+            ? `"${label}" is damaged or uses a codec this browser cannot decode. Try an MP4 with H.264 video.`
+            : `"${label}" could not be opened: the browser did not read the file in time. Please try again.`,
+      );
+    }
     if (!Number.isFinite(video.duration)) {
       // Recorded WebM files often have no duration in the header: seeking far ahead makes the browser find it.
       const known = once(video, "durationchange", LOAD_TIMEOUT_MS);
@@ -42,7 +53,10 @@ export async function probeVideo(blob: Blob, label: string): Promise<VideoProbe>
     const { videoWidth: width, videoHeight: height, duration } = video;
     if (!width || !height) throw new AssetError(`"${label}" has no video track this browser can show.`);
     if (!Number.isFinite(duration) || duration <= 0) throw new AssetError(`The length of "${label}" could not be read.`);
-    if (!(await seekVideo(video, 0, LOAD_TIMEOUT_MS))) throw cannot;
+
+    // Size and duration are all an import needs. The still is best effort: when no frame can be
+    // grabbed right now (for example iOS Low Power Mode), the editor captures one later.
+    if (!(await seekVideo(video, 0, POSTER_TIMEOUT_MS))) return { width, height, duration, poster: undefined };
 
     let poster: Blob | undefined;
     const scale = Math.min(1, POSTER_MAX_SIDE / Math.max(width, height));

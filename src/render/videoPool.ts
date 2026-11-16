@@ -272,6 +272,8 @@ export class VideoPool {
     for (const entry of this.live.values()) entry.cleanup();
     this.live.clear();
     for (const key of [...this.slots.keys()]) if (key.includes("|live|")) this.slots.delete(key);
+    // A poster frame that could not be captured earlier gets another chance after a playback.
+    for (const [key, poster] of [...this.posters]) if (poster.status === "error") this.posters.delete(key);
   }
 
   dispose() {
