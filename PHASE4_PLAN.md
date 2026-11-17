@@ -147,7 +147,8 @@ creative features), 18 (database) and 21 (security).
 
 - [x] D1. Project version history (done 2026-11-17)
 - [x] D2. Advanced asset management (done 2026-11-17, except the two items in D2b)
-- [ ] D2b. SVG import with sanitising, bulk select in the Assets tab (not built yet)
+- [x] D2b (part). Bulk select in the Assets tab (done 2026-11-17)
+- [ ] D2b (part). SVG import with sanitising (not built: needs a Safari export test first)
 - [x] D3. Advanced layouts (done 2026-11-17)
 - [x] D4. Template creator (done 2026-11-17; text and video placeholders not built, see limits)
 - [x] D5. Advanced image tools (done 2026-11-17; background removal skipped for the initial release)
@@ -334,5 +335,16 @@ creative features), 18 (database) and 21 (security).
 - Deleting a template does not free its files; they show as unused in the Assets tab.
 - Template files were only exported and imported in desktop Chrome, on one machine.
 
+### D2b bulk select: what was built
+
+- Assets tab: "Select" turns clicks into selecting (check mark on the card), "Select all shown"
+  takes everything the current filters show. A bar then offers Favorite / Unfavorite, "Add to
+  collection" (existing names are suggested) and Delete.
+- Bulk delete asks once (`bulkDeleteSummary`, pure): how much space is freed, how many of the
+  files are still used and the list of projects, templates, brand kits or version history that
+  would show them as missing. `deleteAssets` and `updateAssetsLibraryInfo` run in one transaction.
+- Verified: 2 new unit tests, 6 new checks in `tests/e2e-phase4.mjs` (46/46). Desktop Chrome only.
+- Limit: no shift-click range selection; the selection is cleared when leaving select mode.
+
 Notes for the next session: every Phase 4 checkpoint that is in scope for the initial release is
-done except D2b (SVG import, bulk select in Assets). D6, D7 and background removal are skipped.
+done except SVG import. D6, D7 and background removal are skipped.

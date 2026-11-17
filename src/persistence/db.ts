@@ -489,6 +489,28 @@ export async function deleteAsset(id: string): Promise<void> {
   await (await db()).delete('assets', id)
 }
 
+/** Delete several assets in one transaction: all of them or none. */
+export async function deleteAssets(ids: string[]): Promise<void> {
+  const tx = (await db()).transaction('assets', 'readwrite')
+  await Promise.all(ids.map((id) => tx.store.delete(id)))
+  await tx.done
+}
+
+/** Set the favorite flag and/or add one collection on several assets in one transaction. */
+export async function updateAssetsLibraryInfo(ids: string[], patch: { favorite?: boolean; addCollection?: string }): Promise<void> {
+  const tx = (await db()).transaction('assets', 'readwrite')
+  for (const id of ids) {
+    const stored = await tx.store.get(id)
+    if (!stored) continue
+    await tx.store.put({
+      ...stored,
+      ...(patch.favorite !== undefined ? { favorite: patch.favorite } : {}),
+      ...(patch.addCollection ? { collections: normalizeCollections([...(stored.collections ?? []), patch.addCollection]) } : {}),
+    })
+  }
+  await tx.done
+}
+
 /** A small picture for the library grid: the image itself, or the poster frame of a video. */
 export async function getAssetPreview(id: string): Promise<Blob | undefined> {
   const stored = await (await db()).get('assets', id)

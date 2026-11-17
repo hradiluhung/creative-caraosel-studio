@@ -1,11 +1,12 @@
 "use client";
 
-import { Star, Trash2, Upload } from "lucide-react";
+import { Check, Star, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { importImageFile, IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
-import { deleteAsset, listLibrary, updateAssetLibraryInfo } from "@/persistence/db";
+import { deleteAsset, deleteAssets, listLibrary, updateAssetLibraryInfo, updateAssetsLibraryInfo } from "@/persistence/db";
 import {
   allCollections,
+  bulkDeleteSummary,
   DEFAULT_LIBRARY_FILTER,
   filterLibrary,
   formatBytes,
@@ -109,11 +110,58 @@ function AssetDetails({ item, onClose }: { item: LibraryItem; onClose: (changed:
   );
 }
 
+/** One warning for a bulk delete: how many files, how much space, and where the used ones are used. */
+function BulkDeleteDialog({ items, onClose }: { items: LibraryItem[]; onClose: (deleted: boolean) => void }) {
+  const summary = bulkDeleteSummary(items);
+  return (
+    <Dialog
+      title={`Delete ${summary.count} file${summary.count === 1 ? "" : "s"}?`}
+      onClose={() => onClose(false)}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onClose(false)}>
+            Keep them
+          </Button>
+          <Button variant="primary" className="bg-danger" data-testid="confirm-bulk-delete" onClick={() => void deleteAssets(items.map((i) => i.id)).then(() => onClose(true))}>
+            Delete permanently
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3 text-xs" data-testid="bulk-delete-summary">
+        <p>
+          This frees {formatBytes(summary.bytes)} on this device. The files cannot be restored.
+        </p>
+        {summary.used > 0 ? (
+          <div role="alert" className="rounded-md border border-danger/40 px-3 py-2 text-danger">
+            <p>
+              {summary.used} of them {summary.used === 1 ? "is" : "are"} still used. After deleting, these places show the file as missing:
+            </p>
+            <ul className="mt-1 max-h-32 space-y-0.5 overflow-auto">
+              {summary.places.map((p) => (
+                <li key={p} className="truncate">
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-muted">None of them is used in a project, template, brand kit or saved version.</p>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
 export function AssetLibrary() {
   const [items, setItems] = useState<LibraryItem[] | null>(null);
   const [filter, setFilter] = useState(DEFAULT_LIBRARY_FILTER);
   const [open, setOpen] = useState<LibraryItem | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkCollection, setBulkCollection] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
   const [quota, setQuota] = useState<{ usage: number; quota: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -154,6 +202,22 @@ export function AssetLibrary() {
   const collections = useMemo(() => allCollections(items ?? []), [items]);
   const shown = useMemo(() => filterLibrary(items ?? [], filter), [items, filter]);
   const summary = useMemo(() => summarizeStorage(items ?? []), [items]);
+  // Only what still exists counts as selected, whatever the filters currently show.
+  const chosen = useMemo(() => (items ?? []).filter((i) => selected.has(i.id)), [items, selected]);
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+  const bulk = async (patch: { favorite?: boolean; addCollection?: string }) => {
+    await updateAssetsLibraryInfo(chosen.map((i) => i.id), patch);
+    await refresh();
+  };
 
   return (
     <div className="pb-16">
@@ -176,8 +240,48 @@ export function AssetLibrary() {
         </Button>
       </div>
 
-      <div className="mb-6">
+      <div className="mb-4">
         <LibraryFilters filter={filter} onChange={setFilter} collections={collections} showUnused />
+      </div>
+
+      <div className="mb-6 flex min-h-9 flex-wrap items-center gap-2" data-testid="bulk-bar">
+        <Button size="sm" variant={selecting ? "primary" : "outline"} aria-pressed={selecting} disabled={!items?.length} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+          {selecting ? "Done" : "Select"}
+        </Button>
+        {selecting && (
+          <>
+            <Button size="sm" variant="ghost" disabled={shown.length === 0} onClick={() => setSelected(new Set(shown.map((i) => i.id)))}>
+              Select all shown ({shown.length})
+            </Button>
+            <span className="text-xs text-muted" data-testid="bulk-count">
+              {chosen.length} selected
+            </span>
+            <span className="grow" />
+            <Button size="sm" disabled={chosen.length === 0} onClick={() => void bulk({ favorite: !chosen.every((i) => i.favorite) })}>
+              <Star className="h-3.5 w-3.5" /> {chosen.length > 0 && chosen.every((i) => i.favorite) ? "Unfavorite" : "Favorite"}
+            </Button>
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (bulkCollection.trim() && chosen.length) void bulk({ addCollection: bulkCollection }).then(() => setBulkCollection(""));
+              }}
+            >
+              <TextInput aria-label="Collection to add to" placeholder="Collection name" list="library-collections" value={bulkCollection} onChange={(e) => setBulkCollection(e.target.value)} className="h-8 w-36" />
+              <datalist id="library-collections">
+                {collections.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              <Button size="sm" type="submit" disabled={chosen.length === 0 || !bulkCollection.trim()}>
+                Add to collection
+              </Button>
+            </form>
+            <Button size="sm" className="text-danger" disabled={chosen.length === 0} onClick={() => setBulkDeleting(true)}>
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </Button>
+          </>
+        )}
       </div>
 
       {errors.length > 0 && (
@@ -200,8 +304,21 @@ export function AssetLibrary() {
       ) : (
         <section aria-label="Assets" className="grid grid-cols-3 gap-x-4 gap-y-5 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {shown.map((item) => (
-            <button key={item.id} type="button" data-testid="asset-card" data-kind={item.kind} onClick={() => setOpen(item)} className="group text-left">
-              <AssetThumb item={item} className="group-hover:border-ink" />
+            <button
+              key={item.id}
+              type="button"
+              data-testid="asset-card"
+              data-kind={item.kind}
+              aria-pressed={selecting ? selected.has(item.id) : undefined}
+              onClick={() => (selecting ? toggle(item.id) : setOpen(item))}
+              className="group relative text-left"
+            >
+              <AssetThumb item={item} className={selecting && selected.has(item.id) ? "border-ink ring-2 ring-ink" : "group-hover:border-ink"} />
+              {selecting && (
+                <span className={`absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full border ${selected.has(item.id) ? "border-ink bg-ink text-bg" : "border-line-strong bg-bg/80"}`}>
+                  {selected.has(item.id) && <Check className="h-3 w-3" />}
+                </span>
+              )}
               <p className="mt-1.5 truncate text-xs font-medium">{item.name}</p>
               <p className="truncate text-[11px] text-muted">
                 {describe(item)}
@@ -210,6 +327,19 @@ export function AssetLibrary() {
             </button>
           ))}
         </section>
+      )}
+
+      {bulkDeleting && (
+        <BulkDeleteDialog
+          items={chosen}
+          onClose={(deleted) => {
+            setBulkDeleting(false);
+            if (deleted) {
+              stopSelecting();
+              void refresh();
+            }
+          }}
+        />
       )}
 
       {open && (

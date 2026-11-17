@@ -243,6 +243,31 @@ try {
   storedAssets = await assetIds();
   ok("after confirming, the file is gone from storage", storedAssets.length === 1 && storedAssets[0].name === "photo-b.png");
 
+  // Bulk select (D2b).
+  await (await page.$('[data-testid="library-input"]')).uploadFile(`${FIXTURES}/color.png`);
+  await until(async () => ({ done: (await cards()).length === 2 }));
+  await clickText("Select");
+  await click('[data-testid="asset-card"]');
+  ok("in select mode a click selects instead of opening the details", (await page.$eval('[data-testid="bulk-count"]', (n) => n.textContent)) === "1 selected" && !(await page.$('[role="dialog"]')));
+  await clickText("Select all shown (2)");
+  ok("select all takes every file that is shown", (await page.$eval('[data-testid="bulk-count"]', (n) => n.textContent)) === "2 selected");
+  await click('[data-testid="bulk-bar"] button ::-p-text(Favorite)');
+  await until(async () => ({ done: (await assetIds()).every((a) => a.favorite) }));
+  await page.type(L("Collection to add to"), "Bulk set");
+  await clickText("Add to collection");
+  await until(async () => ({ done: (await assetIds()).every((a) => a.collections.includes("Bulk set")) }));
+  storedAssets = await assetIds();
+  ok("favorite and collection are applied to all selected files", storedAssets.length === 2 && storedAssets.every((a) => a.favorite && a.collections.includes("Bulk set")), JSON.stringify(storedAssets));
+  ok("the selection survives the change", (await page.$eval('[data-testid="bulk-count"]', (n) => n.textContent)) === "2 selected");
+  await page.evaluate(() => [...document.querySelectorAll('[data-testid="bulk-bar"] button')].find((b) => b.textContent.trim() === "Delete").click());
+  await page.waitForSelector('[data-testid="bulk-delete-summary"]');
+  const bulkText = await page.$eval('[role="dialog"]', (n) => n.textContent);
+  ok("bulk delete asks once and says the files are unused", bulkText.includes("Delete 2 files?") && bulkText.includes("None of them is used") && (await assetIds()).length === 2, bulkText);
+  await page.screenshot({ path: `${SHOTS}/p4-03b-bulk.png` });
+  await click('[data-testid="confirm-bulk-delete"]');
+  await until(async () => ({ done: (await assetIds()).length === 0 && (await cards()).length === 0 && !(await page.$('[data-testid="bulk-count"]')) }));
+  ok("after confirming, all selected files are gone and select mode ends", (await cards()).length === 0 && !(await page.$('[data-testid="bulk-count"]')));
+
   // ---------- D3: advanced layouts ----------
   const boxesOf = async () => (await readDoc()).slides[0].elements.map((e) => ({ type: e.type, assetId: e.assetId, x: e.x, y: e.y, w: e.width, h: e.height, r: e.rotation }));
   const hint = () => page.$eval('[data-testid="layout-hint"]', (n) => n.textContent);

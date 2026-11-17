@@ -2,9 +2,10 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createProject } from "@/document/factory";
 import * as ops from "@/document/operations";
-import { closeDb, deleteAsset, getAssetBlob, getAssetPreview, listLibrary, putAsset, putBrandKit, saveProject, saveVersion, updateAssetLibraryInfo } from "./db";
+import { closeDb, deleteAsset, deleteAssets, updateAssetsLibraryInfo, getAssetBlob, getAssetPreview, listLibrary, putAsset, putBrandKit, saveProject, saveVersion, updateAssetLibraryInfo } from "./db";
 import {
   allCollections,
+  bulkDeleteSummary,
   assetKind,
   DEFAULT_LIBRARY_FILTER,
   filterLibrary,
@@ -141,5 +142,31 @@ describe("asset library storage", () => {
     await deleteAsset("a");
     expect((await listLibrary()).map((i) => i.id)).toEqual(["b"]);
     expect(await getAssetBlob("a")).toBeUndefined();
+  });
+
+  it("changes and deletes several assets at once", async () => {
+    await store("a", { collections: ["Old"] });
+    await store("b", { favorite: true });
+    await store("c");
+    await updateAssetsLibraryInfo(["a", "b", "gone"], { favorite: true, addCollection: " Trip " });
+    await updateAssetsLibraryInfo(["a"], { addCollection: "trip" }); // already there, no duplicate
+    const byId = new Map((await listLibrary()).map((i) => [i.id, i]));
+    expect(byId.get("a")).toMatchObject({ favorite: true, collections: ["Old", "Trip"] });
+    expect(byId.get("b")).toMatchObject({ favorite: true, collections: ["Trip"] });
+    expect(byId.get("c")).toMatchObject({ favorite: false, collections: [] });
+    await updateAssetsLibraryInfo(["a", "b"], { favorite: false });
+    expect((await listLibrary()).some((i) => i.favorite)).toBe(false);
+    await deleteAssets(["a", "c", "gone"]);
+    expect((await listLibrary()).map((i) => i.id)).toEqual(["b"]);
+  });
+
+  it("summarises a bulk delete: size, how many are used and where", () => {
+    const s = bulkDeleteSummary([
+      item("a", { storedBytes: 100 }),
+      item("b", { storedBytes: 200, usage: { projects: ["Zoo", "Alpha"], templates: [], brandKits: ["Kit"], versions: 2 } }),
+      item("c", { storedBytes: 50, usage: { ...none, projects: ["Alpha"], templates: ["T"] } }),
+    ]);
+    expect(s).toEqual({ count: 3, bytes: 350, used: 2, places: ["Brand kit: Kit", "Project: Alpha", "Project: Zoo", "Template: T", "Version history"] });
+    expect(bulkDeleteSummary([item("a")])).toMatchObject({ used: 0, places: [] });
   });
 });

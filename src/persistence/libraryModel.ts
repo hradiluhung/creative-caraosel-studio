@@ -128,6 +128,23 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+/** What deleting several files at once would do: used for the one warning shown before a bulk delete. */
+export function bulkDeleteSummary(items: LibraryItem[]): { count: number; bytes: number; used: number; places: string[] } {
+  const places = new Set<string>();
+  let used = 0;
+  let bytes = 0;
+  for (const item of items) {
+    bytes += item.storedBytes;
+    if (isUnused(item)) continue;
+    used += 1;
+    for (const n of item.usage.projects) places.add(`Project: ${n}`);
+    for (const n of item.usage.templates) places.add(`Template: ${n}`);
+    for (const n of item.usage.brandKits) places.add(`Brand kit: ${n}`);
+    if (item.usage.versions) places.add("Version history");
+  }
+  return { count: items.length, bytes, used, places: [...places].sort((a, b) => a.localeCompare(b)) };
+}
+
 /** One line for the delete warning, or null when nothing references the asset. */
 export function usageSummary(usage: AssetUsage): string | null {
   const parts: string[] = [];
