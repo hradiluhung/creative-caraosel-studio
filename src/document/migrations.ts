@@ -68,6 +68,8 @@ const MIGRATIONS: Record<number, Migration> = {
   5: (doc) => ({ ...doc, schemaVersion: 6 }),
   // Version 7 (grouping): optional groupId on every element.
   6: (doc) => ({ ...doc, schemaVersion: 7 }),
+  // Version 8 (video crop): optional crop on video elements, the same shape photos use.
+  7: (doc) => ({ ...doc, schemaVersion: 8 }),
 };
 
 export class DocumentError extends Error {

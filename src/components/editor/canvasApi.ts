@@ -18,4 +18,6 @@ export const canvasApi: {
   stopPlayback: () => void;
   /** Move the playhead (slide seconds). Playback is paused there and the canvas shows that frame. */
   seek: (seconds: number) => void;
-} = { fit: noop, focusSlide: noop, zoomBy: noop, zoomTo: noop, togglePlayback: noop, stopPlayback: noop, seek: noop };
+  /** Id of the unlocked empty photo frame under a screen point (for dropping a file into it), or null. */
+  emptyFrameAt: (clientX: number, clientY: number) => string | null;
+} = { fit: noop, focusSlide: noop, zoomBy: noop, zoomTo: noop, togglePlayback: noop, stopPlayback: noop, seek: noop, emptyFrameAt: () => null };

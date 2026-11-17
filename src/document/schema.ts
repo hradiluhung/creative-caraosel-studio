@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const finite = z.number().refine(Number.isFinite, "must be finite");
 const hexColor = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "expected #RRGGBB or #RRGGBBAA");
@@ -156,6 +156,8 @@ export const videoElementSchema = z
     mask: imageMaskSchema,
     borderColor: hexColor,
     borderWidth: z.number().min(0),
+    /** How the video sits inside its frame, exactly like a photo's crop. Absent: centred, filling the frame. */
+    crop: imageCropSchema.optional(),
   })
   .refine((el) => el.trimEnd > el.trimStart, { message: "trimEnd must be after trimStart", path: ["trimEnd"] });
 

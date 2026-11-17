@@ -157,6 +157,37 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
 - Verified: new unit tests for groups, template bounds and fresh group ids, `tests/e2e-organize.mjs`
   (39 checks) and new phone checks in `tests/e2e-mobile.mjs`; all suites green.
 
+### Media in frames, video export sound, one template collection (2026-11-18)
+
+- **Video export lost its sound** for some files. Root cause: clip sound was decoded with
+  `decodeAudioData` on the whole video file. That reads only the first sound track and only some
+  containers (Safari does not read QuickTime movies with it), and when it failed the error was
+  swallowed, so the MP4 came out without sound and the export still reported success. It also
+  ignores edit lists, so a sound track that starts later in the file than the picture was placed
+  at 0 s (measured: 980 ms early on a test file). Fix: `src/export/audioSource.ts` decodes the
+  trimmed range with mediabunny and WebCodecs `AudioDecoder`, the same demuxer and timeline the
+  exported frames come from, trying every sound track; `decodeAudioData` is only the fallback.
+  A clip whose sound really cannot be decoded now stops the export with a clear message (mute the
+  clip or choose "No sound"). The read-back check of the finished file uses the same decoder.
+- **Video crop.** Videos have the same Crop section as photos (zoom, move left / right and up /
+  down, rotate 90°, reset) and the frame shape buttons with "As video". Schema version 8 adds the
+  optional `crop` to video elements; one drawing helper (`render/cropDraw.ts`) serves photos and
+  video frames, so preview, thumbnails, still and MP4 exports agree.
+- **Videos in frames.** Empty frames, photo frames and video frames take a photo or a video:
+  "Choose photo or video" in the panel, double-tap on an empty frame, or dropping one file onto an
+  empty frame. The frame keeps its box, stacking, group, mask, corners, border and shadow. A video
+  frame can also be turned back into an empty frame.
+- **Templates.** Only the Photo Journal collection is left; it grew from 8 to 22 templates with new
+  arrangements (contact sheet, diptych, big numerals, magazine cover, film strip, scrapbook, index,
+  postcards, panorama, mosaic with palette, arches, one line a day) and two new formats (Square
+  Notes 1:1, Story Journal 9:16), all in the same paper, ink and serif direction.
+- **New project** is only offered on the Projects page (header button on wider screens, floating
+  button on phones); Templates, Assets and Brand kits no longer show it.
+- Verified: 210 unit tests (new: `src/document/mediaFrames.test.ts`), new `tests/e2e-media.mjs`
+  (27 checks: button placement, template library, video crop in editor / PNG / MP4, videos in
+  frames by picker, canvas picker and drop, sound present, in sync with a delayed sound track, and
+  from a file whose first sound track cannot be decoded), all earlier suites green.
+
 ## Known limits of Phase 5
 
 - Every automated check ran in desktop Chrome on Linux. Nothing here was verified on iOS, Safari

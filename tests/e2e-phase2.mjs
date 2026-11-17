@@ -219,22 +219,21 @@ try {
 
   // ---------- Templates ----------
   await clickText("Templates");
-  await page.waitForSelector(L("Preview template Quiet Minimal"));
+  await page.waitForSelector(L("Preview template Moments on Film"));
   await page.waitForSelector('article img[src^="blob:"]', { timeout: 30000 });
   await sleep(2500);
   await page.screenshot({ path: `${SHOTS}/p2-templates.png` });
   ok("template library lists at least 10 templates", (await page.$$('section[aria-label="Templates"] article')).length >= 10);
-  await page.select(L("Category"), "Travel");
-  ok("category filter narrows the list", (await page.$$('section[aria-label="Templates"] article')).length === 1);
+  const allTemplates = (await page.$$('section[aria-label="Templates"] article')).length;
   await page.select(L("Category"), "Photo Journal");
-  ok("the Photo Journal category has 8 templates", (await page.$$('section[aria-label="Templates"] article')).length === 8);
+  ok("every built-in template is in the Photo Journal category", (await page.$$('section[aria-label="Templates"] article')).length === allTemplates && allTemplates >= 20, String(allTemplates));
   await page.select(L("Category"), "");
-  await click(L("Preview template Quiet Minimal"));
+  await click(L("Preview template Moments on Film"));
   await page.waitForSelector('[aria-label="Slides in this template"] img', { timeout: 30000 });
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Use this template")]);
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
   let doc = await readDoc(projectId());
-  ok("template becomes a normal editable project", doc.slides.length === 5 && doc.slides[0].elements.filter((e) => e.type === "text").length === 4);
+  ok("template becomes a normal editable project", doc.slides.length === 3 && doc.slides[0].elements.filter((e) => e.type === "text").length === 2);
 
   // edit template text and fill a photo placeholder
   await click('ol[aria-label="Slides"] > li:nth-child(2) button');
@@ -245,7 +244,7 @@ try {
   await page.waitForSelector("button ::-p-text(Replace photo)");
   await saved();
   doc = await readDoc(projectId());
-  ok("photo placeholder was filled and keeps its frame", !!doc.slides[1].elements[0].assetId && doc.slides[1].elements[0].width === 900 && doc.assets.length === 1);
+  ok("photo placeholder was filled and keeps its frame", !!doc.slides[1].elements[0].assetId && doc.slides[1].elements[0].width === 1000 && doc.assets.length === 1);
 
   // attach the brand kit
   await page.keyboard.press("Escape");
@@ -268,7 +267,7 @@ try {
   // save as template
   await saved();
   await page.goto(BASE, { waitUntil: "networkidle0" });
-  await click(L("Actions for Quiet Minimal"));
+  await click(L("Actions for Moments on Film"));
   await clickText("Save as template");
   await page.waitForSelector('[role="status"] ::-p-text(saved to Templates)');
   await clickText("Templates");

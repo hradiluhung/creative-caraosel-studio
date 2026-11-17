@@ -310,7 +310,11 @@ Decisions:
   forward once with `VideoDecoder` (seeking a `<video>` per frame is an order of magnitude slower),
   H.264 is encoded with WebCodecs, and sound, mixed with `OfflineAudioContext`, is encoded by a
   bundled WebAssembly AAC encoder because the browsers' own AAC encoders were unreliable (silent files
-  on a Mac and an iPhone, none at all in Chrome on Linux). Without WebCodecs the slide is
+  on a Mac and an iPhone, none at all in Chrome on Linux). Clip sound is **decoded with the same
+  demuxer as the pictures** (`export/audioSource.ts`: mediabunny plus WebCodecs `AudioDecoder`, only
+  the trimmed range), so edit lists and start offsets apply to sound and picture alike, every sound
+  track of a file is tried, and `decodeAudioData` is only the fallback. A clip whose sound cannot be
+  decoded stops the export with a message instead of producing a silent file. Without WebCodecs the slide is
   recorded in real time with `MediaRecorder`. One file per slide, packaged in slide order; slides are
   never merged. The dialog reports what the device can really produce (feature detection in
   `videoSupport.ts`), and each MP4 is reopened to check its size, its duration and that its sound
@@ -398,8 +402,14 @@ Plan, results and limits are in `PHASE5_PLAN.md`. What it added to the architect
   transformer moves it as one.
 - **Slide deletion** (`removeSlide`) works for any slide. In seamless mode it cuts the slide's strip
   out of the panorama by the centre of each object or group.
-- **Templates** are built from small helpers in `src/templates/kit.ts`; the photo journal set lives
-  in `src/templates/journal.ts`.
+- **Templates** are built from small helpers in `src/templates/kit.ts`. The built-in library is one
+  collection, Photo Journal (`src/templates/journal.ts` and `journalMore.ts`, 22 templates in 4:5,
+  1:1 and 9:16); the other built-in categories were removed (2026-11-18).
+- **Media frames (schema version 8).** Video elements have the same optional `crop` as photos, drawn
+  by one helper (`render/cropDraw.ts`) for both, so the editor, thumbnails, still and MP4 exports
+  agree. Any photo or video frame, including an empty one, takes a photo or a video:
+  `videoInFrame` / `imageInFrame` (`document/factory.ts`) keep the frame's box, stacking, group and
+  look, and `replaceElement` swaps the element in place under the same id.
 
 ## 15. Known limitations (honest list)
 
@@ -412,7 +422,7 @@ Plan, results and limits are in `PHASE5_PLAN.md`. What it added to the architect
   panels, the iOS Files picker for fonts and filter speed on a phone still need a device pass.
 - Adjustment sliders use a quick low-resolution preview while moving; the photo sharpens a moment
   after the slider stops. Exports are always full quality.
-- Of the 25 template categories in the specification, 10 have a built-in template so far.
+- The built-in templates are one Photo Journal collection (22 templates); the other categories of the specification have no built-in template.
 - Not built yet from the Phase 2 wish list: curved text, auto-fit text, paragraph spacing, vertical
   alignment, background removal, free-form drawing, pattern and
   image backgrounds, SVG import, gradient fills on shapes, RGB/HSL inputs (the native color picker
@@ -424,7 +434,7 @@ Plan, results and limits are in `PHASE5_PLAN.md`. What it added to the architect
 ### Carried over from Phase 1
 
 - Local only: no accounts, no cloud sync, no project folders yet.
-- No grouping, rulers or grid. Crop and pan inside a frame are sliders, not dragging on the canvas. Resizing an image from a side handle shows a stretched preview until release.
+- No grouping, rulers or grid. Crop and pan inside a frame (photo or video) are sliders, not dragging on the canvas. Resizing an image from a side handle shows a stretched preview until release.
 - Seamless projects cannot be converted to independent ones (or back) after creation. In seamless
   mode slides can be added or removed at the end only.
 - Undo history is per editing session and is not persisted.

@@ -50,13 +50,14 @@ import {
 import { clampTrim, clipDuration, formatSeconds, MAX_VIDEO_SLIDE_SECONDS, videoTimeAt } from "@/document/timing";
 import { VIDEO_LABEL, type VideoMime } from "@/persistence/videoSniff";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
+import { VIDEO_ACCEPT_ATTR } from "@/persistence/video";
 import { FILTER_PRESETS, type FilterPreset } from "@/render/adjust";
 import { ensureFontsLoaded, getFont, resolveItalic, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
 import { selectSelectedElements, useEditorStore } from "@/store/editorStore";
 import { PREF, setPref, usePref } from "@/lib/prefs";
 import { Button, IconButton, Label, NumberField, Segmented, Select, Slider, TextInput } from "../ui/primitives";
-import { alignSelected, makePlaceholders, originalSizeOf, replaceImage, resetSize, type AlignEdge } from "./actions";
+import { alignSelected, makePlaceholders, originalSizeOf, replaceMedia, resetSize, type AlignEdge } from "./actions";
 import { hasOriginalSize } from "@/document/sizing";
 import { groupState } from "@/document/groups";
 import { ColorControl } from "./ColorControl";
@@ -328,6 +329,94 @@ const FRAME_SHAPES = [
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
+const MEDIA_ACCEPT = `${IMAGE_ACCEPT_ATTR},${VIDEO_ACCEPT_ATTR}`;
+
+/** Button that puts a photo or a video into this frame (photos, videos and empty frames alike). */
+function ReplaceMediaButton({ el }: { el: ImageElement | VideoElement }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const label = el.type === "video" ? "Replace video or photo" : el.assetId ? "Replace photo or video" : "Choose photo or video";
+  return (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept={MEDIA_ACCEPT}
+        hidden
+        data-testid="replace-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void replaceMedia(el.id, file).then(setError);
+        }}
+      />
+      <Button className="w-full" onClick={() => fileRef.current?.click()}>
+        <ImagePlus className="h-4 w-4" /> {label}
+      </Button>
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Aspect presets for a frame; the first one is the media's own shape when it is known. */
+function FrameShapeButtons({ el, natural, naturalLabel }: { el: ImageElement | VideoElement; natural: number | null; naturalLabel: string }) {
+  const set = useUpdate(el);
+  return (
+    <div className="flex flex-wrap gap-1" role="group" aria-label="Frame shape">
+      {[...(natural ? [{ label: naturalLabel, ratio: natural }] : []), ...FRAME_SHAPES].map((shape) => (
+        <button
+          key={shape.label}
+          type="button"
+          aria-label={`Frame shape ${shape.label}`}
+          aria-pressed={Math.abs(el.width / el.height - shape.ratio) < 0.01}
+          onClick={() => set(reshapeFrame(el, shape.ratio))}
+          className="h-6 rounded-full border border-line px-2 text-[11px] font-medium text-muted hover:text-ink aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg"
+        >
+          {shape.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Aspect ratio of a media asset as it sits in the frame (a quarter turn swaps the sides). */
+function naturalRatio(asset: { width: number; height: number } | undefined, turns: number): number | null {
+  if (!asset || asset.width <= 0 || asset.height <= 0) return null;
+  return turns % 2 ? asset.height / asset.width : asset.width / asset.height;
+}
+
+/**
+ * Zoom, pan and quarter turns of the picture inside its frame. Photos and videos share this
+ * exactly: the same `crop` field, the same `frameCrop` geometry, the same controls.
+ */
+function CropSection({ el, noun }: { el: ImageElement | VideoElement; noun: "photo" | "video" }) {
+  const set = useUpdate(el);
+  const crop = el.crop ?? NEUTRAL_CROP;
+  const setCrop = (patch: Partial<typeof crop>, coalesce = true) => set({ crop: { ...crop, ...patch } }, coalesce ? `crop:${Object.keys(patch)[0]}` : undefined);
+  return (
+    <Section title="Crop">
+      <AdjustSlider label="Zoom" min={100} max={MAX_CROP_ZOOM * 100} value={Math.round(crop.zoom * 100)} onChange={(v) => setCrop({ zoom: v / 100 })} />
+      <AdjustSlider label="Move left / right" min={-100} value={Math.round(crop.x * 100)} onChange={(v) => setCrop({ x: v / 100 })} />
+      <AdjustSlider label="Move up / down" min={-100} value={Math.round(crop.y * 100)} onChange={(v) => setCrop({ y: v / 100 })} />
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => setCrop({ turns: ((crop.turns + 1) % 4) as 0 | 1 | 2 | 3 }, false)}>
+          <RotateCw className="h-3.5 w-3.5" /> Rotate {noun} 90°
+        </Button>
+        <Button size="sm" variant="ghost" disabled={!el.crop} onClick={() => set({ crop: undefined })}>
+          Reset crop
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted">
+        The {noun} always fills its frame. Moving only has an effect where the frame hides part of the {noun}: zoom in, or use a frame with a different shape.
+      </p>
+    </Section>
+  );
+}
+
 function VideoProps({ el }: { el: VideoElement }) {
   const set = useUpdate(el);
   const asset = useEditorStore((s) => s.project?.assets.find((a) => a.id === el.assetId));
@@ -382,67 +471,34 @@ function VideoProps({ el }: { el: VideoElement }) {
         <p className="text-[11px] text-muted">The poster frame is what thumbnails and image exports show. Trim, speed and poster time are in seconds.</p>
       </Section>
       <Section title="Frame">
+        <ReplaceMediaButton el={el} />
         <FrameStyleControls el={el} />
-        <p className="text-[11px] text-muted">
-          The video always fills its frame. Resize the frame from a side handle to crop. Filters and adjustments are for photos only: they cannot be applied to video in real time.
-        </p>
+        <FrameShapeButtons el={el} natural={naturalRatio(asset, el.crop?.turns ?? 0)} naturalLabel="As video" />
+        <Button size="sm" variant="ghost" className="-ml-2" onClick={() => makePlaceholders([el.id])}>
+          Turn into empty frame
+        </Button>
+        <p className="text-[11px] text-muted">Filters and adjustments are for photos only: they cannot be applied to video in real time.</p>
       </Section>
+      <CropSection el={el} noun="video" />
     </>
   );
 }
 
 function ImageProps({ el }: { el: ImageElement }) {
   const set = useUpdate(el);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
   const [presetName, setPresetName] = useState("");
   const [showAdjust, setShowAdjust] = useState(false);
   const saved = usePref<FilterPreset[]>(PREF.imagePresets, NO_PRESETS);
   const asset = useEditorStore((s) => s.project?.assets.find((a) => a.id === el.assetId));
-  const crop = el.crop ?? NEUTRAL_CROP;
-  const natural = asset && asset.width > 0 && asset.height > 0 ? (crop.turns % 2 ? asset.height / asset.width : asset.width / asset.height) : null;
-  const setCrop = (patch: Partial<typeof crop>, coalesce = true) => set({ crop: { ...crop, ...patch } }, coalesce ? `crop:${Object.keys(patch)[0]}` : undefined);
   const applyPreset = (preset: FilterPreset | null) =>
     set({ adjustments: { ...NEUTRAL_ADJUSTMENTS, ...(preset?.adjustments ?? {}) }, filter: preset?.name ?? null });
 
   return (
     <>
       <Section title="Image">
-        <input
-          ref={fileRef}
-          type="file"
-          accept={IMAGE_ACCEPT_ATTR}
-          hidden
-          data-testid="replace-input"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = "";
-            if (file) void replaceImage(el.id, file).then(setError);
-          }}
-        />
-        <Button className="w-full" onClick={() => fileRef.current?.click()}>
-          <ImagePlus className="h-4 w-4" /> {el.assetId ? "Replace photo" : "Choose photo"}
-        </Button>
-        {error && (
-          <p role="alert" className="text-xs text-danger">
-            {error}
-          </p>
-        )}
+        <ReplaceMediaButton el={el} />
         <FrameStyleControls el={el} />
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Frame shape">
-          {[...(natural ? [{ label: "As photo", ratio: natural }] : []), ...FRAME_SHAPES].map((shape) => (
-            <button
-              key={shape.label}
-              type="button"
-              aria-label={`Frame shape ${shape.label}`}
-              aria-pressed={Math.abs(el.width / el.height - shape.ratio) < 0.01}
-              onClick={() => set(reshapeFrame(el, shape.ratio))}
-              className="h-6 rounded-full border border-line px-2 text-[11px] font-medium text-muted hover:text-ink aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg"
-            >
-              {shape.label}
-            </button>
-          ))}
-        </div>
+        <FrameShapeButtons el={el} natural={naturalRatio(asset, el.crop?.turns ?? 0)} naturalLabel="As photo" />
         {el.assetId && (
           <Button size="sm" variant="ghost" className="-ml-2" onClick={() => makePlaceholders([el.id])}>
             Turn into empty frame
@@ -450,22 +506,7 @@ function ImageProps({ el }: { el: ImageElement }) {
         )}
       </Section>
 
-      {el.assetId && (
-        <Section title="Crop">
-          <AdjustSlider label="Zoom" min={100} max={MAX_CROP_ZOOM * 100} value={Math.round(crop.zoom * 100)} onChange={(v) => setCrop({ zoom: v / 100 })} />
-          <AdjustSlider label="Move left / right" min={-100} value={Math.round(crop.x * 100)} onChange={(v) => setCrop({ x: v / 100 })} />
-          <AdjustSlider label="Move up / down" min={-100} value={Math.round(crop.y * 100)} onChange={(v) => setCrop({ y: v / 100 })} />
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => setCrop({ turns: ((crop.turns + 1) % 4) as 0 | 1 | 2 | 3 }, false)}>
-              <RotateCw className="h-3.5 w-3.5" /> Rotate photo 90°
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!el.crop} onClick={() => set({ crop: undefined })}>
-              Reset crop
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted">The photo always fills its frame. Moving only has an effect where the frame hides part of the photo: zoom in, or use a frame with a different shape.</p>
-        </Section>
-      )}
+      {el.assetId && <CropSection el={el} noun="photo" />}
 
       <Section title="Color effects">
         <Toggle

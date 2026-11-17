@@ -196,6 +196,87 @@ export function createVideo(asset: AssetRef, p: Placement): VideoElement {
   };
 }
 
+/** A photo or video frame: the element types that hold media and can swap it. */
+export type MediaFrame = ImageElement | VideoElement;
+
+/**
+ * What a frame keeps when its content changes: identity, place, size, stacking, grouping and the
+ * look of the frame itself (mask, corners, border, flips, shadow, blend). The picture inside and
+ * its crop are what change.
+ */
+function frameShell(el: MediaFrame) {
+  return {
+    id: el.id,
+    name: el.name,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+    rotation: el.rotation,
+    opacity: el.opacity,
+    visible: el.visible,
+    locked: el.locked,
+    blendMode: el.blendMode,
+    shadow: el.shadow,
+    ...(el.groupId ? { groupId: el.groupId } : {}),
+    flipX: el.flipX,
+    flipY: el.flipY,
+    cornerRadius: el.cornerRadius,
+    mask: el.mask,
+    borderColor: el.borderColor,
+    borderWidth: el.borderWidth,
+  };
+}
+
+const assetLabel = (asset: AssetRef, fallback: string) => asset.name.replace(/\.[^.]+$/, "") || fallback;
+
+/**
+ * Put a video into an existing frame (an empty placeholder, a photo, or another video).
+ * The clip starts where the frame's clip started (0 for a photo frame) and is centred in the frame.
+ */
+export function videoInFrame(frame: MediaFrame, asset: AssetRef): VideoElement {
+  const start = frame.type === "video" ? frame.start : 0;
+  const duration = asset.duration ?? 1;
+  return {
+    ...frameShell(frame),
+    // An empty frame is named after its role ("Photo 2"); once it holds a clip, the clip's name is clearer.
+    name: frame.type === "image" ? assetLabel(asset, "Video") : frame.name,
+    type: "video",
+    assetId: asset.id,
+    start,
+    trimStart: 0,
+    trimEnd: Math.max(0.1, Math.min(duration, MAX_VIDEO_SLIDE_SECONDS - start)),
+    volume: frame.type === "video" ? frame.volume : 1,
+    muted: frame.type === "video" ? frame.muted : false,
+    playbackRate: 1,
+    loop: frame.type === "video" ? frame.loop : false,
+    posterTime: 0,
+  };
+}
+
+/**
+ * Put a photo into an existing frame, or empty it with `assetId: null`. A photo frame keeps its
+ * filter and color effects; a video frame becomes a photo frame with a neutral look.
+ */
+export function imageInFrame(frame: MediaFrame, asset: AssetRef | null): ImageElement {
+  const look =
+    frame.type === "image"
+      ? {
+          adjustments: frame.adjustments,
+          filter: frame.filter,
+          ...(frame.duotone ? { duotone: frame.duotone } : {}),
+          ...(frame.overlay ? { overlay: frame.overlay } : {}),
+        }
+      : { adjustments: NEUTRAL_ADJUSTMENTS, filter: null };
+  return {
+    ...frameShell(frame),
+    name: frame.type === "video" ? (asset ? assetLabel(asset, "Image") : "Photo") : frame.name,
+    type: "image",
+    assetId: asset?.id ?? null,
+    ...look,
+  };
+}
+
 /** Empty photo frame that the user fills later. Used by templates. */
 export function createPlaceholder(box: { x: number; y: number; width: number; height: number }, name = "Photo"): ImageElement {
   return { ...base(name), type: "image", assetId: null, ...box, ...IMAGE_DEFAULTS };

@@ -7,7 +7,8 @@
  *    same shape ImageStore.getProcessed returns for photos, so the scene builder treats
  *    both the same way (pattern fill of the mask outline)
  */
-import { coverCrop } from "@/document/geometry";
+import { frameCrop } from "@/document/geometry";
+import { drawFrameCrop } from "./cropDraw";
 import type { VideoElement } from "@/document/schema";
 import { clipActive, clipEnded, videoTimeAt } from "@/document/timing";
 import { createSilentVideo, lastFrameTime, releaseVideo, seekVideo } from "./videoDom";
@@ -91,13 +92,13 @@ export class VideoPool {
   frame(el: VideoElement, opts: VideoFrameOptions): HTMLCanvasElement | undefined {
     const drawable = this.drawable(el, opts.time);
     if (!drawable) return undefined;
-    const crop = coverCrop(drawable.width, drawable.height, el.width, el.height);
+    const crop = frameCrop(drawable.width, drawable.height, el.width, el.height, el.crop);
     // Never upscale beyond the source pixels, and respect the caller's size budget.
     const scale = Math.min(opts.quality, crop.width / el.width, opts.maxSide / Math.max(el.width, el.height));
     const w = Math.max(1, Math.round(el.width * scale));
     const h = Math.max(1, Math.round(el.height * scale));
     const key = [el.id, opts.time === undefined ? "poster" : "live", w, h].join("|");
-    const signature = drawable.signature === null ? null : `${drawable.signature}|${el.flipX}|${el.flipY}`;
+    const signature = drawable.signature === null ? null : `${drawable.signature}|${el.flipX}|${el.flipY}|${el.crop ? JSON.stringify(el.crop) : ""}`;
 
     let slot = this.slots.get(key);
     if (slot) {
@@ -125,7 +126,7 @@ export class VideoPool {
     ctx.translate(el.flipX ? w : 0, el.flipY ? h : 0);
     ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
     try {
-      ctx.drawImage(drawable.source, crop.x, crop.y, crop.width, crop.height, 0, 0, w, h);
+      drawFrameCrop(ctx, drawable.source, crop, w, h);
     } catch {
       return undefined; // the decoder went away between the readiness check and the draw
     }

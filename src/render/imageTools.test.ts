@@ -114,7 +114,7 @@ describe("schema version 6", () => {
   const withImage = ops.addElements(ops.addAssetRef(base, ref), base.slides[0].id, [img]);
 
   it("accepts images with and without the new fields", () => {
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
     expect(projectSchema.safeParse(withImage).success).toBe(true);
     const styled = ops.updateElements(withImage, base.slides[0].id, [img.id], {
       crop: { x: 0.25, y: -1, zoom: 2.5, turns: 3 },

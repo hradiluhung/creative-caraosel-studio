@@ -15,7 +15,8 @@ import { buildSurfaceContent, collectFonts, ELEMENT_NAME, measureTextHeight, ref
 import { useEditorStore } from "@/store/editorStore";
 import { FloatingMenu, type MenuItem } from "../ui/primitives";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
-import { replaceImage } from "./actions";
+import { VIDEO_ACCEPT_ATTR } from "@/persistence/video";
+import { replaceMedia } from "./actions";
 import { canvasApi } from "./canvasApi";
 
 const MIN_SCALE = 0.02;
@@ -112,6 +113,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
   const [resourceTick, setResourceTick] = useState(0);
   const [view, setViewState] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [fillError, setFillError] = useState<string | null>(null);
 
   // --- View (zoom and pan) --------------------------------------------------
 
@@ -654,6 +656,13 @@ export function CanvasStage({ images }: { images: ImageStore }) {
 
     canvasApi.fit = fit;
     canvasApi.focusSlide = focusSlide;
+    canvasApi.emptyFrameAt = (clientX, clientY) => {
+      const box = stage.container().getBoundingClientRect();
+      const hit = stage.getIntersection({ x: clientX - box.left, y: clientY - box.top });
+      const node = hit && elementNodeOf(hit);
+      const el = node ? elementsById().get(node.id()) : undefined;
+      return el?.type === "image" && !el.assetId && !el.locked ? el.id : null;
+    };
     canvasApi.zoomBy = (factor) => zoomAt({ x: stage.width() / 2, y: stage.height() / 2 }, stage.scaleX() * factor);
     canvasApi.zoomTo = (scale) => zoomAt({ x: stage.width() / 2, y: stage.height() / 2 }, scale);
     canvasApi.togglePlayback = () => {
@@ -708,6 +717,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       canvasApi.fit = canvasApi.focusSlide = canvasApi.zoomBy = canvasApi.zoomTo = () => {};
+      canvasApi.emptyFrameAt = () => null;
       canvasApi.togglePlayback = canvasApi.stopPlayback = canvasApi.seek = () => {};
       unsubscribeAudio();
       document.removeEventListener("visibilitychange", onHidden);
@@ -921,16 +931,24 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       <input
         ref={fileRef}
         type="file"
-        accept={IMAGE_ACCEPT_ATTR}
+        accept={`${IMAGE_ACCEPT_ATTR},${VIDEO_ACCEPT_ATTR}`}
         hidden
         data-testid="placeholder-input"
         onChange={(e) => {
           const file = e.target.files?.[0];
           const target = replaceTargetRef.current ?? store().selection[0];
           e.target.value = "";
-          if (file && target) void replaceImage(target, file);
+          if (file && target) void replaceMedia(target, file).then(setFillError);
         }}
       />
+      {fillError && (
+        <div role="alert" className="absolute top-3 left-1/2 z-20 w-[min(90%,420px)] -translate-x-1/2 rounded-md border border-danger/40 bg-panel px-3 py-2 text-xs text-danger shadow-lg">
+          <p>{fillError}</p>
+          <button type="button" className="mt-1 underline" onClick={() => setFillError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {menu && <FloatingMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   );

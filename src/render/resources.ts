@@ -3,6 +3,7 @@
  * The blob loader is injected so rendering stays independent of persistence.
  */
 import { frameCrop } from "@/document/geometry";
+import { drawFrameCrop } from "./cropDraw";
 import { isNeutralLook, type ImageElement, type ImageLook, type VideoElement } from "@/document/schema";
 import { applyLook } from "./adjust";
 import type { AdjustRequest, AdjustResponse } from "./adjust.worker";
@@ -174,18 +175,7 @@ export class ImageStore implements RenderResources {
       ctx.imageSmoothingQuality = "high";
       ctx.translate(el.flipX ? cw : 0, el.flipY ? ch : 0);
       ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
-      if (crop.turns === 0) {
-        ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, cw, ch);
-      } else {
-        // Map the turned photo onto the canvas, then place the unturned pixels into that space.
-        ctx.scale(cw / crop.width, ch / crop.height);
-        ctx.translate(-crop.x, -crop.y);
-        if (crop.turns === 1) ctx.translate(crop.sourceWidth, 0);
-        else if (crop.turns === 2) ctx.translate(crop.sourceWidth, crop.sourceHeight);
-        else ctx.translate(0, crop.sourceHeight);
-        ctx.rotate((crop.turns * Math.PI) / 2);
-        ctx.drawImage(image, 0, 0);
-      }
+      drawFrameCrop(ctx, image, crop, cw, ch);
       return { canvas, ctx };
     };
     const processNow = (cw: number, ch: number) => {

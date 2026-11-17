@@ -223,9 +223,12 @@ export function Dashboard() {
           <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Creative Carousel Studio</p>
           <h1 className="mt-1 truncate font-display text-[28px] leading-none font-bold tracking-tight sm:text-[34px]">{TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
-        <Button variant="primary" className={cn("shrink-0", tab === "projects" && "max-sm:hidden")} onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" /> New project
-        </Button>
+        {/* Project creation lives on the Projects page only (phones use the floating button there). */}
+        {tab === "projects" && (
+          <Button variant="primary" className="shrink-0 max-sm:hidden" onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" /> New project
+          </Button>
+        )}
       </header>
 
       <main className="pb-safe mx-auto max-w-6xl px-5 sm:px-8">

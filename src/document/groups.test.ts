@@ -101,7 +101,7 @@ describe("groups in the document", () => {
     expect(projectSchema.safeParse(JSON.parse(JSON.stringify(g))).success).toBe(true);
     const reopened = parseProject(JSON.parse(JSON.stringify(g)));
     expect(groupsOf(reopened.slides[0].elements).filter((x) => x !== "-")).toHaveLength(2);
-    expect(parseProject({ ...JSON.parse(JSON.stringify(p)), schemaVersion: 6 }).schemaVersion).toBe(7);
+    expect(parseProject({ ...JSON.parse(JSON.stringify(p)), schemaVersion: 6 }).schemaVersion).toBe(8);
   });
 
   it("dissolves when deleting leaves a single member", () => {

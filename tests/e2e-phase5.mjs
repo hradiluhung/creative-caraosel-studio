@@ -242,7 +242,7 @@ try {
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), page.click('[data-testid="recovery-version"] button')]);
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
   const recovered = await readDoc();
-  ok("restoring a saved version brings the project back with that content", recovered.id === id && recovered.name === "Phase Five" && recovered.slides[0].elements.length === 1 && recovered.schemaVersion === 7, JSON.stringify({ n: recovered.slides?.[0]?.elements?.length }));
+  ok("restoring a saved version brings the project back with that content", recovered.id === id && recovered.name === "Phase Five" && recovered.slides[0].elements.length === 1 && recovered.schemaVersion === 8, JSON.stringify({ n: recovered.slides?.[0]?.elements?.length }));
   ok("the project's versions are still there after recovery", (await storedVersions()).some((v) => v.name === "Good state"));
   await page.click('[data-category="shapes"]');
   await click(L("Add rectangle"));

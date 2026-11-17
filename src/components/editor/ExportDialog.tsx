@@ -379,7 +379,7 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
 
         {placeholders > 0 && phase.kind === "idle" && (
           <p role="note" data-testid="placeholder-warning" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
-            {placeholders} empty photo {placeholders === 1 ? "frame is" : "frames are"} still waiting for a photo. Empty frames are left out of the export.
+            {placeholders} empty {placeholders === 1 ? "frame is" : "frames are"} still waiting for a photo or video. Empty frames are left out of the export.
           </p>
         )}
         {running && (

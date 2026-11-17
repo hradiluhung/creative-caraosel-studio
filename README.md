@@ -83,8 +83,9 @@ Not done yet; the hosting target is open. Things to know:
   borders, shadows, replace photo
 - Backgrounds: linear and radial gradients with up to 6 colors
 - Stickers and doodles (18), film grain / light leak / vignette overlays, blend modes on every layer
-- Templates: 10 fully editable built-in templates with photo placeholders, filters by category,
-  ratio and length, favorites, and "Save as template" for your own projects
+- Templates: 22 fully editable Photo Journal templates (4:5, 1:1 and 9:16) with empty frames that
+  take photos or videos, filters by ratio and length, favorites, and "Save as template" for your
+  own projects
 - Brand kits: colors, heading and body fonts, logos; attach a kit to a project to get its swatches,
   text styles and logos in the editor
 - Colors: recent colors, brand swatches, eyedropper where the browser has one

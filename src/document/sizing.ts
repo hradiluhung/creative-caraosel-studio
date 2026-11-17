@@ -41,7 +41,8 @@ export function originalSize(
     case "video": {
       const a = ctx.asset;
       if (!a || a.id !== el.assetId || a.width <= 0 || a.height <= 0) return null;
-      return size(createVideo(a, p));
+      const turned = (el.crop?.turns ?? 0) % 2 === 1;
+      return size(createVideo({ ...a, width: turned ? a.height : a.width, height: turned ? a.width : a.height }, p));
     }
   }
 }

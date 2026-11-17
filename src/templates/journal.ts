@@ -12,32 +12,32 @@ import type { DesignElement, ImageElement, TextElement } from "@/document/schema
 import type { TemplateDef } from "./builtin";
 import { H, independent, photo, seamless, shadow, shape, solid, sticker, text, W, type Box } from "./kit";
 
-const CATEGORY = "Photo Journal";
+export const CATEGORY = "Photo Journal";
 
 // A small, shared palette: paper, ink and a muted grey for captions.
-const PAPER = "#efece6";
-const INK = "#1d1c1a";
-const MUTED = "#6f6a62";
+export const PAPER = "#efece6";
+export const INK = "#1d1c1a";
+export const MUTED = "#6f6a62";
 
 /** Small sans caption, the voice of most journal notes. */
-const caption = (content: string, at: [number, number, number], o: Partial<TextElement> & { size?: number } = {}) =>
+export const caption = (content: string, at: [number, number, number], o: Partial<TextElement> & { size?: number } = {}) =>
   text(content, at, { size: 24, fill: INK, lineHeight: 1.35, ...o });
 /** Numbering such as (1), [01] or 001. */
-const label = (content: string, at: [number, number, number], o: Partial<TextElement> & { size?: number } = {}) =>
+export const label = (content: string, at: [number, number, number], o: Partial<TextElement> & { size?: number } = {}) =>
   text(content, at, { size: 22, fill: INK, ...o });
 /** An expressive serif title. */
-const title = (content: string, at: [number, number, number], size: number, o: Partial<TextElement> = {}) =>
+export const title = (content: string, at: [number, number, number], size: number, o: Partial<TextElement> = {}) =>
   text(content, at, { size, fontFamily: "Instrument Serif", fill: INK, lineHeight: 0.95, ...o });
 
 /** A plain photo frame on the page. */
-const frame = (box: Box, name: string, o: Partial<ImageElement> = {}) => ({ ...photo(box, o), name });
+export const frame = (box: Box, name: string, o: Partial<ImageElement> = {}) => ({ ...photo(box, o), name });
 
 /**
  * A polaroid: white card, photo and handwritten caption, grouped so they move as one.
  * Elements turn around their own centre, so the parts are placed by turning their offsets
  * around the card's centre; the result looks like one turned card.
  */
-function polaroid(x: number, y: number, width: number, rotation: number, note: string, name: string): DesignElement[] {
+export function polaroid(x: number, y: number, width: number, rotation: number, note: string, name: string): DesignElement[] {
   const pad = Math.round(width * 0.07);
   const photoSize = width - pad * 2;
   const height = Math.round(pad + photoSize + width * 0.26);

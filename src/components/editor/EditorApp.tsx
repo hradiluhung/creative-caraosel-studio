@@ -11,7 +11,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/lib/useMediaQuery";
 import { Sheet } from "../ui/primitives";
-import { importMedia } from "./actions";
+import { importMedia, replaceMedia } from "./actions";
 import { canvasApi } from "./canvasApi";
 import { CanvasStage } from "./CanvasStage";
 import { ExportDialog } from "./ExportDialog";
@@ -158,13 +158,17 @@ function Workspace({ images, template: openedTemplate }: { images: ImageStore; t
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
         setDropActive(false);
-        void importMedia(Array.from(e.dataTransfer.files)).then(setDropErrors);
+        const files = Array.from(e.dataTransfer.files);
+        // One file dropped on an empty frame fills that frame (photo or video); anything else is added.
+        const frame = files.length === 1 ? canvasApi.emptyFrameAt(e.clientX, e.clientY) : null;
+        if (frame) void replaceMedia(frame, files[0]).then((error) => setDropErrors(error ? [error] : []));
+        else void importMedia(files).then(setDropErrors);
       }}
     >
       <CanvasStage images={images} />
       {dropActive && (
         <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent/10 text-sm font-medium">
-          Drop images or videos to add them
+          Drop images or videos to add them, or onto an empty frame to fill it
         </div>
       )}
       {dropErrors.length > 0 && (

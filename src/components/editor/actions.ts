@@ -1,9 +1,9 @@
 /** Editor commands shared by the desktop panels, the mobile sheets and keyboard shortcuts. */
-import { createImage, createOverlay, createPlaceholder, createShape, createSticker, createText, createVideo, placementFor, type Placement, type TextPreset } from "@/document/factory";
+import { createImage, createOverlay, createPlaceholder, createShape, createSticker, createText, createVideo, imageInFrame, placementFor, videoInFrame, type Placement, type TextPreset } from "@/document/factory";
 import { getSurface, rotatedBounds } from "@/document/geometry";
 import { createId } from "@/document/ids";
 import { assignBoxes, layoutArea, layoutBoxes, MIN_LAYOUT_COUNT, type LayoutKind } from "@/document/layouts";
-import { addAssetRef, addElements, setSlideAudio, setSlideDuration, splitVideo, updateElements } from "@/document/operations";
+import { addAssetRef, addElements, replaceElement, setSlideAudio, setSlideDuration, splitVideo, updateElements } from "@/document/operations";
 import { isVideoAsset, type AssetRef, type AudioTrack, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
 import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
@@ -54,22 +54,42 @@ export function insertOverlay(kind: OverlayKind) {
   if (p) store().addElement(createOverlay(kind, p));
 }
 
-/** Put a photo into an existing frame (placeholder or image), keeping its box, mask and look. */
-export async function replaceImage(elementId: string, file: File): Promise<string | null> {
+/**
+ * Put a photo or a video into an existing frame (an empty placeholder, a photo or a video),
+ * keeping its box, stacking, group, mask, corners, border and shadow. The file is routed by its
+ * real signature. One undo step. Returns an error message, or null when it worked.
+ */
+export async function replaceMedia(elementId: string, file: File): Promise<string | null> {
   try {
-    const ref = await importImageFile(file);
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    const isVideo = !sniffImageType(head) && !!sniffVideoType(head);
+    if (!isVideo && !sniffImageType(head)) throw new Error(`"${file.name}" is not a supported image (JPG, PNG, WebP) or video (MP4, MOV, WebM).`);
+    const ref = isVideo ? await importVideoFile(file) : await importImageFile(file);
     const s = store();
-    s.commit((p) => updateElements(addAssetRef(p, ref), s.activeSurfaceId, [elementId], { assetId: ref.id, crop: undefined } as Partial<DesignElement>));
+    s.commit((p) => {
+      const el = getSurface(p, s.activeSurfaceId)?.elements.find((e) => e.id === elementId);
+      if (!el || (el.type !== "image" && el.type !== "video")) return p;
+      const next = isVideo ? videoInFrame(el, ref) : imageInFrame(el, ref);
+      return replaceElement(addAssetRef(p, ref), s.activeSurfaceId, elementId, next);
+    });
     return null;
   } catch (e) {
-    return e instanceof Error ? e.message : "The image could not be imported.";
+    return e instanceof Error ? e.message : "The file could not be imported.";
   }
 }
 
-/** Turn photos back into empty frames (for templates). Box, mask, border and look are kept. One undo step. */
+/** Turn photos and videos back into empty frames (for templates). Box, mask, border and look are kept. One undo step. */
 export function makePlaceholders(ids: string[]) {
   const s = store();
-  s.commit((p) => updateElements(p, s.activeSurfaceId, ids, (el) => (el.type === "image" && el.assetId ? ({ assetId: null, crop: undefined } as Partial<DesignElement>) : {})));
+  const wanted = new Set(ids);
+  s.commit((p) => {
+    let next = p;
+    for (const el of getSurface(p, s.activeSurfaceId)?.elements ?? []) {
+      if (!wanted.has(el.id)) continue;
+      if ((el.type === "image" && el.assetId) || el.type === "video") next = replaceElement(next, s.activeSurfaceId, el.id, imageInFrame(el, null));
+    }
+    return next;
+  });
 }
 
 /** The size an element gets when it is added (see document/sizing.ts), or null if there is none. */

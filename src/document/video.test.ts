@@ -450,7 +450,7 @@ describe("background music", () => {
   const track = { ...createAudioTrack(song), volume: 0.8 };
 
   it("is part of schema version 5 and survives a round trip", () => {
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
     const { project, surfaceId } = withVideo();
     const withMusic = ops.setSlideAudio(ops.addAssetRef(project, song), surfaceId, { ...track, fadeIn: 1, fadeOut: 2, loop: true });
     expect(parseProject(JSON.parse(JSON.stringify(withMusic)))).toEqual(withMusic);

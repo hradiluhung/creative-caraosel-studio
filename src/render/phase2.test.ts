@@ -154,8 +154,8 @@ describe("schema v2", () => {
   });
 
   it("counts empty photo placeholders and ignores them as assets", () => {
-    const t = listBuiltInTemplates().find((x) => x.id === "quiet-minimal")!;
-    expect(ops.countPlaceholders(t.doc)).toBe(3);
+    const t = listBuiltInTemplates().find((x) => x.id === "journal-a-weekend-in")!;
+    expect(ops.countPlaceholders(t.doc)).toBe(6);
     expect(ops.usedAssetIds(t.doc).size).toBe(0);
   });
 });
@@ -163,8 +163,19 @@ describe("schema v2", () => {
 describe("templates", () => {
   const templates = listBuiltInTemplates();
 
+  it("the built-in library is one Photo Journal collection with varied formats", () => {
+    expect(templates.length).toBeGreaterThanOrEqual(20);
+    expect(new Set(templates.map((t) => t.category))).toEqual(new Set(["Photo Journal"]));
+    // Different shapes and kinds of document, not one layout repeated.
+    const ratios = new Set(templates.map((t) => `${t.doc.width}x${t.doc.height}`));
+    expect(ratios).toEqual(new Set(["1080x1350", "1080x1080", "1080x1920"]));
+    expect(templates.some((t) => t.doc.mode === "seamless")).toBe(true);
+    expect(templates.some((t) => t.doc.mode === "independent")).toBe(true);
+    const masks = new Set(templates.flatMap((t) => [...t.doc.panorama.elements, ...t.doc.slides.flatMap((s) => s.elements)]).flatMap((e) => (e.type === "image" ? [e.mask] : [])));
+    expect(masks.has("arch") && masks.has("ellipse") && masks.has("rect")).toBe(true);
+  });
+
   it("every built-in template is a valid, editable document", () => {
-    expect(templates.length).toBeGreaterThanOrEqual(10);
     expect(new Set(templates.map((t) => t.id)).size).toBe(templates.length);
     for (const t of templates) {
       const result = projectSchema.safeParse(t.doc);
@@ -219,7 +230,7 @@ describe("templates", () => {
   });
 
   it("seamless templates really cross slide boundaries", () => {
-    const pano = templates.find((t) => t.id === "travel-panorama")!;
+    const pano = templates.find((t) => t.id === "journal-panorama-diary")!;
     expect(pano.doc.mode).toBe("seamless");
     expect(pano.doc.panorama.elements.some((e) => e.x < pano.doc.width && e.x + e.width > pano.doc.width)).toBe(true);
   });

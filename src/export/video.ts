@@ -22,6 +22,7 @@ import { frameClips, frameDuration, trackEnd, trackGainPoints } from "@/document
 import type { ImageStore } from "@/render/resources";
 import { buildSurfaceContent, refreshVideoFrames, type BuildOptions } from "@/render/scene";
 import { createSilentVideo, releaseVideo, waitForMetadata } from "@/render/videoDom";
+import { decodeAudioRange, type DecodedAudio } from "./audioSource";
 import { ClipFeed, openDecodedSource, type DecodedSource } from "./frameSource";
 import {
   AUDIO_BITRATE,
@@ -101,78 +102,78 @@ function createFrameStage(project: Project, frame: ExportFrame, images: ImageSto
   };
 }
 
-/** Mix the sound of every audible clip over the slide's timeline. Null when there is nothing to hear. */
+/**
+ * Mix the sound of every audible clip over the slide's timeline. Null when there is nothing to hear.
+ *
+ * Clip sound is decoded from the same demuxer and timeline as the clip's pictures
+ * (audioSource.ts), so it stays in step with them. A clip whose file has sound that this browser
+ * cannot decode stops the export with a clear message: a video that silently lost its sound is
+ * worse than an error.
+ */
 async function mixAudio(clips: VideoElement[], music: AudioTrack | undefined, duration: number, images: ImageStore, check: () => void): Promise<AudioBuffer | null> {
   const audible = clips.filter((el) => !el.muted && el.volume > 0 && el.start < duration);
   const track = music && music.volume > 0 && trackEnd(music, duration) > music.start ? music : undefined;
   if (audible.length === 0 && !track) return null;
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * AUDIO_SAMPLE_RATE)), AUDIO_SAMPLE_RATE);
-  const decoded = new Map<string, AudioBuffer | null>();
+  const decoded = new Map<string, DecodedAudio | null>();
   let any = false;
+
+  /**
+   * Play `audio` from source time `from` to `to` starting at slide time `at`, looping that range
+   * when asked, until slide time `until`.
+   */
+  const schedule = (audio: DecodedAudio, node: AudioNode, opts: { at: number; from: number; to: number; loop: boolean; until: number; rate?: number }) => {
+    const source = ctx.createBufferSource();
+    source.buffer = audio.buffer;
+    if (opts.rate) source.playbackRate.value = opts.rate;
+    source.connect(node);
+    // Positions inside the buffer: the buffer starts at source time `audio.offset`.
+    const from = Math.max(0, opts.from - audio.offset);
+    const to = Math.min(audio.buffer.duration, opts.to - audio.offset);
+    if (to <= from) return false;
+    if (opts.loop) {
+      source.loop = true;
+      source.loopStart = from;
+      source.loopEnd = to;
+      source.start(opts.at, from);
+    } else {
+      source.start(opts.at, from, to - from);
+    }
+    source.stop(opts.until);
+    return true;
+  };
+
   if (track) {
     check();
-    let buffer: AudioBuffer | null = null;
-    try {
-      const blob = await images.getBlob(track.assetId);
-      if (blob) buffer = await ctx.decodeAudioData(await blob.arrayBuffer());
-    } catch {
-      buffer = null;
-    }
-    if (!buffer) throw new Error("The music of this slide could not be decoded by this browser.");
-    const trimEnd = Math.min(track.trimEnd, buffer.duration);
-    if (trimEnd > track.trimStart) {
-      any = true;
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      const gain = ctx.createGain();
-      // The same curve the preview follows (timing.ts), as linear ramps between its corner points.
-      const points = trackGainPoints(track, duration);
-      gain.gain.setValueAtTime(points[0]?.gain ?? track.volume, 0);
-      for (const point of points) gain.gain.linearRampToValueAtTime(point.gain, point.time);
-      source.connect(gain).connect(ctx.destination);
-      if (track.loop) {
-        source.loop = true;
-        source.loopStart = track.trimStart;
-        source.loopEnd = trimEnd;
-        source.start(track.start, track.trimStart);
-      } else {
-        source.start(track.start, track.trimStart, trimEnd - track.trimStart);
-      }
-      source.stop(trackEnd(track, duration));
-    }
+    const blob = await images.getBlob(track.assetId);
+    const result = blob ? await decodeAudioRange(blob, track.trimStart, track.trimEnd, ctx, check) : null;
+    if (!result || result.status !== "ok") throw new Error("The music of this slide could not be decoded by this browser.");
+    const gain = ctx.createGain();
+    // The same curve the preview follows (timing.ts), as linear ramps between its corner points.
+    const points = trackGainPoints(track, duration);
+    gain.gain.setValueAtTime(points[0]?.gain ?? track.volume, 0);
+    for (const point of points) gain.gain.linearRampToValueAtTime(point.gain, point.time);
+    gain.connect(ctx.destination);
+    if (schedule(result.audio, gain, { at: track.start, from: track.trimStart, to: track.trimEnd, loop: track.loop, until: trackEnd(track, duration) })) any = true;
   }
   for (const el of audible) {
     check();
-    if (!decoded.has(el.assetId)) {
-      let buffer: AudioBuffer | null = null;
-      try {
-        const blob = await images.getBlob(el.assetId);
-        if (blob) buffer = await ctx.decodeAudioData(await blob.arrayBuffer());
-      } catch {
-        buffer = null; // a video without a sound track, or sound this browser cannot decode
+    const key = `${el.assetId}:${el.trimStart}:${el.trimEnd}`;
+    if (!decoded.has(key)) {
+      const blob = await images.getBlob(el.assetId);
+      const result = blob ? await decodeAudioRange(blob, el.trimStart, el.trimEnd, ctx, check) : ({ status: "none" } as const);
+      if (result.status === "failed") {
+        throw new Error(`"${el.name}": ${result.reason}. Mute this clip or choose "No sound" to export it without sound.`);
       }
-      decoded.set(el.assetId, buffer);
+      decoded.set(key, result.status === "ok" ? result.audio : null);
     }
-    const buffer = decoded.get(el.assetId);
-    if (!buffer) continue;
-    any = true;
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.playbackRate.value = el.playbackRate;
+    const audio = decoded.get(key);
+    if (!audio) continue; // a video without a sound track
     const gain = ctx.createGain();
     gain.gain.value = el.volume;
-    source.connect(gain).connect(ctx.destination);
-    const trimEnd = Math.min(el.trimEnd, buffer.duration);
-    if (trimEnd <= el.trimStart) continue;
-    if (el.loop) {
-      source.loop = true;
-      source.loopStart = el.trimStart;
-      source.loopEnd = trimEnd;
-      source.start(el.start, el.trimStart);
-      source.stop(duration);
-    } else {
-      source.start(el.start, el.trimStart, trimEnd - el.trimStart);
-    }
+    gain.connect(ctx.destination);
+    const until = el.loop ? duration : el.start + (el.trimEnd - el.trimStart) / el.playbackRate;
+    if (schedule(audio, gain, { at: el.start, from: el.trimStart, to: el.trimEnd, loop: el.loop, until: Math.min(duration, until), rate: el.playbackRate })) any = true;
   }
   return any ? ctx.startRendering() : null;
 }
@@ -199,7 +200,11 @@ async function verifySound(blob: Blob, mixed: AudioBuffer, slide: number) {
   if (wanted < 0.0005) return; // the mix itself is silent (quiet clips): nothing to compare
   let got: number;
   try {
-    const decoded = await new OfflineAudioContext(2, 1, AUDIO_SAMPLE_RATE).decodeAudioData(await blob.arrayBuffer());
+    // Read back with the same decoder the export used for its sources (not decodeAudioData,
+    // which cannot open MP4 video files in every browser).
+    const result = await decodeAudioRange(blob, 0, mixed.duration, new OfflineAudioContext(2, 1, AUDIO_SAMPLE_RATE));
+    if (result.status !== "ok") throw new Error("no sound track");
+    const decoded = result.audio.buffer;
     got = Math.max(rms(decoded.getChannelData(0)), decoded.numberOfChannels > 1 ? rms(decoded.getChannelData(1)) : 0);
   } catch {
     throw new Error(`Slide ${slide}: the sound track of the exported video cannot be read back, so it is probably broken. Try again, or export without sound.`);

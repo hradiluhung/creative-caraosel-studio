@@ -57,6 +57,17 @@ export function updateElements(
   });
 }
 
+/** Swap one element for another in the same place in the stacking order (same id expected). */
+export function replaceElement(project: Project, surfaceId: string, id: string, next: DesignElement): Project {
+  return mapContainer(project, surfaceId, (c) => {
+    const index = c.elements.findIndex((el) => el.id === id);
+    if (index < 0) return c;
+    const elements = c.elements.slice();
+    elements[index] = next;
+    return { ...c, elements };
+  });
+}
+
 export function removeElements(project: Project, surfaceId: string, ids: string[]): Project {
   const set = new Set(ids);
   return mapContainer(project, surfaceId, (c) => {
