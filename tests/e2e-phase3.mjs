@@ -111,7 +111,7 @@ const exportPng = async (name) => {
   for (let i = 0; i < 100 && !fs.existsSync(file); i++) await sleep(150);
   const buf = fs.readFileSync(file);
   fs.rmSync(file);
-  await clickText("Done");
+  await clickText("Continue editing");
   return { warning, size: await decodePng(buf) };
 };
 /** Screen position of a document point on a freshly fitted slide (same math as fitToViewport). */
@@ -590,7 +590,7 @@ try {
   ok("it announces a mixed ZIP", !!(await page.$("p ::-p-text(2 JPG and 1 video)")));
   await runExport("Export 3 slides");
   const zipBuf = await download("mixed-export-slides.zip");
-  await clickText("Done");
+  await clickText("Continue editing");
   const zip = await JSZip.loadAsync(zipBuf);
   const names = Object.keys(zip.files);
   ok("mixed project exports one ordered ZIP: photo, video, photo", names.join() === "mixed-export-01.jpg,mixed-export-02.mp4,mixed-export-03.jpg", names.join());
@@ -620,7 +620,7 @@ try {
   ok("the dialog shows the smaller size", (await page.$eval('[data-testid="video-summary"]', (n) => n.textContent)).startsWith("720 × 900"));
   await runExport("Export 1 slide");
   const single = await download("mixed-export-02.mp4");
-  await clickText("Done");
+  await clickText("Continue editing");
   mp4 = await inspectVideo(single, "video/mp4", [0, 0.7]);
   ok("a single video slide downloads as one MP4 at 720p", isMp4(single) && mp4.width === 720 && mp4.height === 900, `${mp4.width}x${mp4.height}`);
   ok("trim reaches the export: 0.8 s long and blue from the first frame", Math.abs(mp4.duration - 0.8) < 0.1 && isBlue(mp4.colors[0].center) && isBlue(mp4.colors[1].center), `${mp4.duration} ${mp4.colors[0].center}`);
@@ -637,7 +637,7 @@ try {
   await clickText("Current");
   await runExport("Export 1 slide");
   mp4 = await inspectVideo(await download("mixed-export-02.mp4"), "video/mp4", [0.5, 0.95, 1.05, 1.5]);
-  await clickText("Done");
+  await clickText("Continue editing");
   ok(
     "a split clip exports seamlessly across the cut",
     Math.abs(mp4.duration - 2) < 0.1 && isRed(mp4.colors[0].center) && isRed(mp4.colors[1].center) && isBlue(mp4.colors[2].center) && isBlue(mp4.colors[3].center),
@@ -691,7 +691,7 @@ try {
   await clickText("Current");
   await runExport("Export 1 slide");
   let withMusic = await download("mixed-export-02.mp4");
-  await clickText("Done");
+  await clickText("Continue editing");
   let levels = await loudness(withMusic, [[0.02, 0.2], [1.2, 1.8]]);
   ok("exported video carries the music as AAC (clips are muted)", hasBox(withMusic, "mp4a") && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
   ok("with the fade in: quiet at the start, full after one second", levels[0] < levels[1] * 0.35, levels.map((v) => v.toFixed(4)).join(" "));
@@ -707,7 +707,7 @@ try {
   await clickText("Current");
   await runExport("Export 1 slide");
   withMusic = await download("mixed-export-02.mp4");
-  await clickText("Done");
+  await clickText("Continue editing");
   levels = await loudness(withMusic, [[0.1, 0.8], [1.3, 1.9]]);
   ok("the export is silent until the music starts", levels[0] < 0.003 && levels[1] > 0.02, levels.map((v) => v.toFixed(4)).join(" "));
 
@@ -769,7 +769,7 @@ try {
   await clickText("Current");
   await runExport("Export 1 slide");
   const heavyOut = await download("mixed-export-03.mp4");
-  await clickText("Done");
+  await clickText("Continue editing");
   mp4 = await inspectVideo(heavyOut, "video/mp4", [1]);
   ok("and the export of that slide is full size, 8 s, with sound", mp4.width === 1080 && mp4.height === 1350 && Math.abs(mp4.duration - 8) < 0.15 && hasBox(heavyOut, "mp4a"), `${mp4.width}x${mp4.height} ${mp4.duration}`);
   await click('ol[aria-label="Slides"] > li:nth-child(2) button');

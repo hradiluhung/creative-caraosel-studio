@@ -77,7 +77,7 @@ const exportPng = async (name) => {
   for (let i = 0; i < 100 && !fs.existsSync(file); i++) await sleep(150);
   const buf = fs.readFileSync(file);
   fs.rmSync(file);
-  await clickText("Done");
+  await clickText("Continue editing");
   await page.evaluate(async (b64) => {
     const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
     const c = new OffscreenCanvas(bmp.width, bmp.height);

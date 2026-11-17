@@ -245,7 +245,7 @@ try {
   fs.writeFileSync(`${SHOTS}/export-slide-02.png`, slide2);
   await decode(slide2, "image/png");
   ok("exported background color is exact", near(await pixel(5, 5), [0xf4, 0xe9, 0xd8, 255], 1));
-  await clickText("Done");
+  await clickText("Continue editing");
 
   // ---------- 10. Export a single JPG ----------
   await clickText("Export");
@@ -254,7 +254,7 @@ try {
   await page.waitForSelector('[data-testid="export-done"]');
   const jpg = await waitDownload("bali-trip-01.jpg");
   ok("single slide exports as JPG 1080x1350", (await decode(jpg, "image/jpeg")).width === 1080 && jpg[0] === 0xff && jpg[1] === 0xd8);
-  await clickText("Done");
+  await clickText("Continue editing");
 
   // ---------- 11. Seamless panorama: slices must line up ----------
   await page.goto(BASE, { waitUntil: "networkidle0" });
@@ -308,7 +308,7 @@ try {
   ok("slide 2: bar spans the full width", near(s2[0], RED) && near(s2[1], RED));
   ok("slide 3: bar ends at x=240 (2400 - 2160)", near(s3[0], RED) && near(s3[1], RED) && near(s3[2], WHITE));
   ok("bar edges meet at identical rows on both sides of the 1|2 boundary", near(s1[3], WHITE) && near(s1[4], RED) && near(s1[5], RED) && near(s1[6], WHITE) && near(s2[2], WHITE) && near(s2[3], RED) && near(s2[4], RED) && near(s2[5], WHITE));
-  await clickText("Done");
+  await clickText("Continue editing");
 
   // ---------- 12. Preview vs export parity ----------
   // Sample the live editor canvas at the same document point the export was checked at.

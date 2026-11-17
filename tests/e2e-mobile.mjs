@@ -266,7 +266,7 @@ try {
   await (await page.waitForSelector("button ::-p-text(Export 5 slides)")).tap();
   await page.waitForSelector('[data-testid="export-done"]', { timeout: 60000 });
   const doneText = await page.$eval('[data-testid="export-done"]', (n) => n.textContent);
-  ok("on a phone the export waits for the share sheet instead of downloading a ZIP", doneText.includes("Save to Photos or Files") && !doneText.includes("download has started") && (await page.evaluate(() => window.__autoDownloads)) === 0, doneText);
+  ok("on a phone the export waits for the share sheet instead of downloading a ZIP", doneText.includes("Save them to Photos or to Files") && !doneText.includes("download has started") && (await page.evaluate(() => window.__autoDownloads)) === 0, doneText);
   await (await page.waitForSelector('[data-testid="share-export"]')).tap();
   await page.waitForFunction(() => window.__shared);
   const shared = await page.evaluate(() => window.__shared);
@@ -275,8 +275,19 @@ try {
   await page.screenshot({ path: `${SHOTS}/m-05-export.png` });
   await (await page.waitForSelector("button ::-p-text(Download ZIP)")).tap();
   ok("and that tap downloads it", await page.waitForFunction(() => window.__autoDownloads === 1).then(() => true, () => false));
-  await page.keyboard.press("Escape");
+
+  // ---------- What happens after an export ----------
+  const success = () => page.$eval('[data-testid="export-success"]', (n) => n.offsetParent !== null).catch(() => false);
+  const settingsShown = () => page.$eval("fieldset", (n) => !n.hidden).catch(() => false);
+  ok("a finished export shows the result instead of the settings", (await success()) && !(await settingsShown()) && (await page.$eval("[data-testid=export-success]", (n) => n.textContent)).includes("Export complete"));
+  ok("with a picture of every exported slide and the total size", (await page.$$('[aria-label="Exported files"] img')).length === 5 && / (KB|MB) in total/.test(doneText), doneText);
+  await (await page.waitForSelector("button ::-p-text(Export again with other settings)")).tap();
+  ok("'Export again' goes back to the settings", (await settingsShown()) && !(await success()));
+  await (await page.waitForSelector("button ::-p-text(Export 5 slides)")).tap();
+  await page.waitForSelector('[data-testid="export-success"]', { timeout: 60000 });
+  await (await page.waitForSelector("button ::-p-text(Continue editing)")).tap();
   await sleep(300);
+  ok("'Continue editing' closes the dialog and stays in the editor", !(await page.$('[data-testid="export-success"]')) && page.url().includes("/editor"));
 
   // Desktop pointer: the sliders stay hidden, the panel looks as before.
   const editorUrl = page.url();
@@ -294,6 +305,13 @@ try {
     await desk.$eval('nav[aria-label="Sections"]:not([data-testid])', (n) => n.offsetParent !== null) && (await desk.$eval('[data-testid="mobile-nav"]', (n) => getComputedStyle(n).display === "none")),
   );
   await desk.close();
+
+  // Leaving for the dashboard from the finished export.
+  await (await page.waitForSelector("button ::-p-text(Export)")).tap();
+  await (await page.waitForSelector("button ::-p-text(Export 5 slides)")).tap();
+  await page.waitForSelector('[data-testid="export-success"]', { timeout: 60000 });
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), (await page.waitForSelector("button ::-p-text(Back to projects)")).tap()]);
+  ok("'Back to projects' opens the dashboard", new URL(page.url()).pathname === "/" && !!(await page.$('[data-testid="mobile-nav"]')));
 
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (e) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { CircleCheck, Film } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   downloadBlob,
@@ -16,6 +17,8 @@ import { detectVideoSupport, videoBitrate, videoOutputSize, type AudioCodec, typ
 import { FORMAT_INFO, zipFileName, type ImageFormat } from "@/export/naming";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
+import { useObjectUrl } from "@/lib/useObjectUrl";
+import { formatBytes } from "@/persistence/libraryModel";
 import { Button, Dialog, Label, Segmented, Slider } from "../ui/primitives";
 
 type Phase =
@@ -35,6 +38,91 @@ function shareable(files: ExportedFile[]): File[] | null {
 }
 
 const isTouchScreen = () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true;
+
+/** Small picture of one exported file: the image itself, or a film tile for a video. */
+function ExportedThumb({ file }: { file: ExportedFile }) {
+  const url = useObjectUrl(file.kind === "image" ? file.blob : null);
+  return (
+    <span className="flex h-20 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-line bg-sunken" style={{ aspectRatio: `${file.width} / ${file.height}` }}>
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element -- local blob preview
+        <img src={url} alt={file.name} className="h-full w-full object-cover" />
+      ) : (
+        <Film aria-label={file.name} className="h-5 w-5 text-muted" />
+      )}
+    </span>
+  );
+}
+
+/** What the dialog shows once the export is done: the result, how to save it, and where to go next. */
+function ExportSuccess({
+  files,
+  viaShare,
+  hasZip,
+  canShare,
+  onShare,
+  onDownload,
+  onAgain,
+}: {
+  files: ExportedFile[];
+  viaShare: boolean;
+  hasZip: boolean;
+  canShare: boolean;
+  onShare: () => void;
+  onDownload: () => void;
+  onAgain: () => void;
+}) {
+  const bytes = files.reduce((n, f) => n + f.blob.size, 0);
+  const allImages = files.every((f) => f.kind === "image");
+  return (
+    <div className="space-y-4" data-testid="export-success">
+      <div className="flex items-start gap-3">
+        <CircleCheck className="mt-0.5 h-6 w-6 shrink-0 text-ink" aria-hidden />
+        <div className="min-w-0">
+          <p className="text-[15px] font-semibold">Export complete</p>
+          <p role="status" data-testid="export-done" className="text-xs text-muted">
+            Exported {files.length} {files.length === 1 ? "file" : "files"}
+            {allImages ? ` at ${files[0].width} × ${files[0].height} px` : `: ${files.map((f) => f.name.split(".").pop()).join(", ")}`}, {formatBytes(bytes)} in total.
+            {viaShare ? " Save them to Photos or to Files below." : " The download has started."}
+            {files.some((f) => f.kind === "video" && !f.hasAudio) && " The video has no sound."}
+          </p>
+        </div>
+      </div>
+
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" aria-label="Exported files">
+        {files.map((f) => (
+          <ExportedThumb key={f.name} file={f} />
+        ))}
+      </div>
+
+      {viaShare ? (
+        <div className="space-y-1.5">
+          <Button variant="primary" className="w-full" data-testid="share-export" onClick={onShare}>
+            Save to Photos or Files
+          </Button>
+          <Button variant="ghost" className="w-full" onClick={onDownload}>
+            {hasZip ? "Download ZIP" : "Download"}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={onDownload}>
+            Download again
+          </Button>
+          {canShare && (
+            <Button size="sm" onClick={onShare}>
+              Share
+            </Button>
+          )}
+        </div>
+      )}
+
+      <button type="button" onClick={onAgain} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
+        Export again with other settings
+      </button>
+    </div>
+  );
+}
 
 export function ExportDialog({ images, onClose }: { images: ImageStore; onClose: () => void }) {
   const project = useEditorStore((s) => s.project);
@@ -131,41 +219,12 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
           <Button onClick={() => abortRef.current?.abort()}>Cancel export</Button>
         ) : phase.kind === "done" ? (
           <>
-            {phase.viaShare ? (
-              <>
-                <Button variant="ghost" onClick={() => deliver(phase.files, phase.zip)}>
-                  {phase.zip ? "Download ZIP" : "Download"}
-                </Button>
-                <Button
-                  variant="primary"
-                  data-testid="share-export"
-                  onClick={() => {
-                    const files = shareable(phase.files);
-                    // Cancelling the share sheet rejects too; that is not an error.
-                    if (files) void navigator.share({ files }).catch(() => undefined);
-                  }}
-                >
-                  Save to Photos or Files
-                </Button>
-              </>
-            ) : (
-              <>
-                {shareable(phase.files) && (
-                  <Button
-                    onClick={() => {
-                      const files = shareable(phase.files);
-                      if (files) void navigator.share({ files }).catch(() => undefined);
-                    }}
-                  >
-                    Share
-                  </Button>
-                )}
-                <Button onClick={() => deliver(phase.files, phase.zip)}>Download again</Button>
-                <Button variant="primary" onClick={onClose}>
-                  Done
-                </Button>
-              </>
-            )}
+            <Button variant="ghost" className="mr-auto" onClick={() => (window.location.href = "/")}>
+              Back to projects
+            </Button>
+            <Button variant={phase.viaShare ? "outline" : "primary"} onClick={onClose}>
+              Continue editing
+            </Button>
           </>
         ) : (
           <>
@@ -180,7 +239,7 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
       }
     >
       <div className="space-y-4">
-        <fieldset disabled={running || phase.kind === "done"} className="space-y-4 disabled:opacity-50">
+        <fieldset disabled={running} hidden={phase.kind === "done"} className="space-y-4 disabled:opacity-50">
           {videoSlides.length > 0 && (
             <div className="space-y-2 rounded-md border border-line p-3" data-testid="video-export">
               <div className="space-y-1.5">
@@ -334,14 +393,19 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
           </div>
         )}
         {phase.kind === "done" && (
-          <p role="status" data-testid="export-done" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
-            Exported {phase.files.length} {phase.files.length === 1 ? "file" : "files"}
-            {phase.files.every((f) => f.kind === "image") ? ` at ${phase.files[0].width} × ${phase.files[0].height} px` : `: ${phase.files.map((f) => f.name.split(".").pop()).join(", ")}`}.
-            {phase.viaShare
-              ? " Tap “Save to Photos or Files”, then choose whether to save to Photos or to Files."
-              : " The download has started."}
-            {phase.files.some((f) => f.kind === "video" && !f.hasAudio) && " The video has no sound."}
-          </p>
+          <ExportSuccess
+            files={phase.files}
+            viaShare={phase.viaShare}
+            hasZip={phase.zip !== null}
+            onShare={() => {
+              const files = shareable(phase.files);
+              // Cancelling the share sheet rejects too; that is not an error.
+              if (files) void navigator.share({ files }).catch(() => undefined);
+            }}
+            canShare={shareable(phase.files) !== null}
+            onDownload={() => deliver(phase.files, phase.zip)}
+            onAgain={() => setPhase({ kind: "idle" })}
+          />
         )}
         {phase.kind === "error" && (
           <p role="alert" className="rounded-md border border-danger/40 px-3 py-2 text-xs text-danger">
