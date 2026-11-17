@@ -338,7 +338,8 @@ rough smoothness measurement for a slow phone.
 
 ## 13. Phase 4: advanced features (in progress)
 
-`PHASE4_PLAN.md` is the working plan and progress log. Done so far: **D1 project version history, D2 asset library, D3 layouts.**
+`PHASE4_PLAN.md` is the working plan and progress log. Done: **D1 version history, D2 asset library, D3 layouts, D4 template creator, D5 image tools.**
+Skipped for the initial release: cloud sync, AI assistant, background removal.
 
 - **Version history is local and document-only.** A version is the whole document JSON plus a
   thumbnail in the `projectVersions` store (database version 3). Documents are small because they
@@ -360,6 +361,13 @@ rough smoothness measurement for a slow phone.
   Konva's `dragBoundFunc` and `boundBoxFunc`, so the snapped position is what Konva itself uses.
   Holding Ctrl or Cmd turns snapping off. Not snapped: resizing a single rotated element,
   rotation-aware edges, equal spacing between objects.
+- **Document schema is version 6.** Image elements gained optional `crop`, `duotone` and `overlay`.
+  Cropping is one pure function (`frameCrop`), the look is one pure function (`applyLook`), and
+  both sit on the existing image path, so editor, thumbnails and export cannot differ.
+- **A template is edited by the same editor.** Template mode only changes where autosave writes
+  (`saveTemplateDoc` instead of `saveProject`) and hides version history. Template rules are pure
+  (`src/templates/model.ts`); the template file format and its validation are in
+  `src/templates/file.ts`, storage glue in `transfer.ts`.
 - **Layouts are pure geometry** (`src/document/layouts.ts`): a kind, a count and an area give boxes.
   The editor turns boxes into placeholder image elements or moves the selected photos into them;
   the layout itself is not stored, the result is ordinary elements.

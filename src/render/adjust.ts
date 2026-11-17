@@ -3,7 +3,7 @@
  * Works on a plain RGBA byte array, so it runs (and is tested) outside the browser,
  * and can move into a Web Worker later without changes.
  */
-import type { Adjustments } from "@/document/schema";
+import type { Adjustments, ColorOverlay, Duotone, ImageLook } from "@/document/schema";
 
 const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
@@ -151,6 +151,49 @@ export function applyAdjustments(data: Uint8ClampedArray, width: number, height:
       data[i + 2] = clamp(data[i + 2] + n);
     }
   }
+}
+
+const rgb = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)] as const;
+
+/** Map brightness to a two-colour ramp, mixed with the original by `amount`. Alpha is untouched. */
+export function applyDuotone(data: Uint8ClampedArray, duotone: Duotone): void {
+  const mix = duotone.amount / 100;
+  if (mix <= 0) return;
+  const [sr, sg, sb] = rgb(duotone.shadow);
+  const [hr, hg, hb] = rgb(duotone.highlight);
+  // One entry per brightness level, so the per-pixel work is a lookup and a blend.
+  const ramp = new Uint8ClampedArray(256 * 3);
+  for (let v = 0; v < 256; v++) {
+    const t = v / 255;
+    ramp[v * 3] = sr + (hr - sr) * t;
+    ramp[v * 3 + 1] = sg + (hg - sg) * t;
+    ramp[v * 3 + 2] = sb + (hb - sb) * t;
+  }
+  for (let i = 0; i < data.length; i += 4) {
+    const l = Math.round(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) * 3;
+    data[i] = data[i] + (ramp[l] - data[i]) * mix;
+    data[i + 1] = data[i + 1] + (ramp[l + 1] - data[i + 1]) * mix;
+    data[i + 2] = data[i + 2] + (ramp[l + 2] - data[i + 2]) * mix;
+  }
+}
+
+/** Blend a flat colour over every pixel. Alpha is untouched, so masks and transparency survive. */
+export function applyColorOverlay(data: Uint8ClampedArray, overlay: ColorOverlay): void {
+  const a = overlay.opacity / 100;
+  if (a <= 0) return;
+  const [r, g, b] = rgb(overlay.color);
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = data[i] + (r - data[i]) * a;
+    data[i + 1] = data[i + 1] + (g - data[i + 1]) * a;
+    data[i + 2] = data[i + 2] + (b - data[i + 2]) * a;
+  }
+}
+
+/** The whole look of a photo, in order: adjustments, duotone, colour overlay. */
+export function applyLook(data: Uint8ClampedArray, width: number, height: number, look: ImageLook): void {
+  applyAdjustments(data, width, height, look.adjustments);
+  if (look.duotone) applyDuotone(data, look.duotone);
+  if (look.overlay) applyColorOverlay(data, look.overlay);
 }
 
 export interface FilterPreset {

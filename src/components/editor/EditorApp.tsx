@@ -23,10 +23,12 @@ import { SlideNavigator } from "./SlideNavigator";
 import { SaveStatus, TopBar } from "./TopBar";
 import { useAutosave } from "./useAutosave";
 import { useVersionHistory } from "./useVersionHistory";
+import { loadUserTemplate } from "@/templates";
+import { TemplateSettingsDialog, type TemplateDetails } from "./TemplateSettingsDialog";
 import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { useSlideThumbnails } from "./useSlideThumbnails";
 
-type LoadState = { kind: "loading" } | { kind: "ready" } | { kind: "error"; message: string; details?: string[] };
+type LoadState = { kind: "loading" } | { kind: "ready"; template: TemplateDetails | null } | { kind: "error"; message: string; details?: string[] };
 type MobileSheet = "insert" | "edit" | "layers" | "background" | null;
 
 function useEditorShortcuts(enabled: boolean) {
@@ -69,7 +71,9 @@ function useEditorShortcuts(enabled: boolean) {
   }, [enabled]);
 }
 
-function Workspace({ images }: { images: ImageStore }) {
+function Workspace({ images, template: openedTemplate }: { images: ImageStore; template: TemplateDetails | null }) {
+  const [template, setTemplate] = useState(openedTemplate);
+  const [templateSettings, setTemplateSettings] = useState(false);
   const isMobile = useIsMobile();
   const project = useEditorStore((s) => s.project);
   const hasSelection = useEditorStore((s) => s.selection.length > 0);
@@ -83,8 +87,8 @@ function Workspace({ images }: { images: ImageStore }) {
   const [dropActive, setDropActive] = useState(false);
   const [dropErrors, setDropErrors] = useState<string[]>([]);
 
-  useAutosave(images);
-  useVersionHistory(images);
+  useAutosave(images, template?.id ?? null);
+  useVersionHistory(images, !template);
 
   // Keep the attached brand kit loaded for the color fields and the Brand section.
   const brandKitId = project?.brandKitId ?? null;
@@ -97,7 +101,9 @@ function Workspace({ images }: { images: ImageStore }) {
       live = false;
     };
   }, [brandKitId]);
-  useEditorShortcuts(!exporting && !historyOpen);
+  useEditorShortcuts(!exporting && !historyOpen && !templateSettings);
+  const onTemplateSettings = template ? () => setTemplateSettings(true) : undefined;
+  const templateDialog = template && templateSettings && <TemplateSettingsDialog template={template} onSaved={setTemplate} onClose={() => setTemplateSettings(false)} />;
 
   // Heavy videos get a light preview copy in the background (also ones imported before this existed).
   const assets = project?.assets;
@@ -165,7 +171,7 @@ function Workspace({ images }: { images: ImageStore }) {
     ];
     return (
       <div className="flex h-dvh flex-col overflow-hidden">
-        <TopBar compact onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} />
+        <TopBar compact onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} onTemplateSettings={onTemplateSettings} />
         {canvas}
         {!sheet && <Timeline />}
         {sheet === "insert" && (
@@ -211,13 +217,14 @@ function Workspace({ images }: { images: ImageStore }) {
         </nav>
         {exporting && <ExportDialog images={images} onClose={() => setExporting(false)} />}
         {historyOpen && <VersionHistoryDialog images={images} onClose={() => setHistoryOpen(false)} />}
+        {templateDialog}
       </div>
     );
   }
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <TopBar compact={false} onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} onTogglePanel={(side) => setPanels((p) => ({ ...p, [side]: !p[side] }))} />
+      <TopBar compact={false} onExport={() => setExporting(true)} onHistory={() => setHistoryOpen(true)} onTemplateSettings={onTemplateSettings} onTogglePanel={(side) => setPanels((p) => ({ ...p, [side]: !p[side] }))} />
       <div className="flex min-h-0 flex-1">
         {panels.left && (
           <aside aria-label="Insert" className="thin-scroll w-60 shrink-0 overflow-y-auto border-r border-line bg-panel">
@@ -245,6 +252,7 @@ function Workspace({ images }: { images: ImageStore }) {
       </div>
       {exporting && <ExportDialog images={images} onClose={() => setExporting(false)} />}
         {historyOpen && <VersionHistoryDialog images={images} onClose={() => setHistoryOpen(false)} />}
+        {templateDialog}
     </div>
   );
 }
@@ -255,17 +263,27 @@ export default function EditorApp() {
 
   useEffect(() => {
     let cancelled = false;
-    const id = new URLSearchParams(window.location.search).get("id");
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    const templateId = params.get("template");
     (async () => {
-      if (!id) return setState({ kind: "error", message: "No project was specified." });
+      if (!id && !templateId) return setState({ kind: "error", message: "No project was specified." });
       try {
         // Custom fonts must be registered before any text is measured or drawn.
         await loadCustomFonts();
-        const project = await loadProject(id);
+        if (templateId) {
+          // Template mode: the same editor, working on the template's own document.
+          const template = await loadUserTemplate(templateId);
+          if (cancelled) return;
+          if (!template) return setState({ kind: "error", message: "This template does not exist on this device." });
+          useEditorStore.getState().open(template.doc);
+          return setState({ kind: "ready", template: { id: template.id, category: template.category, description: template.description ?? "" } });
+        }
+        const project = await loadProject(id!);
         if (cancelled) return;
         if (!project) return setState({ kind: "error", message: "This project does not exist on this device." });
         useEditorStore.getState().open(project);
-        setState({ kind: "ready" });
+        setState({ kind: "ready", template: null });
       } catch (e) {
         if (cancelled) return;
         if (e instanceof DocumentError) setState({ kind: "error", message: e.message, details: e.issues.slice(0, 5) });
@@ -300,5 +318,5 @@ export default function EditorApp() {
       </div>
     );
   }
-  return <Workspace images={images} />;
+  return <Workspace images={images} template={state.template} />;
 }

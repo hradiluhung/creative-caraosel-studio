@@ -160,7 +160,7 @@ try {
   let doc = await readDoc();
   let el = doc.slides[0].elements[0];
   const asset = doc.assets[0];
-  ok("document is schema version 5 with one video element", doc.schemaVersion === 5 && doc.slides[0].elements.length === 1 && el.type === "video" && el.assetId === asset.id);
+  ok("document is schema version 6 with one video element", doc.schemaVersion === 6 && doc.slides[0].elements.length === 1 && el.type === "video" && el.assetId === asset.id);
   ok(
     "asset records real type, size and duration",
     doc.assets.length === 1 && asset.mime === "video/mp4" && asset.width === 320 && asset.height === 240 && Math.abs(asset.duration - 2) < 0.15,
@@ -484,7 +484,7 @@ try {
   await page.reload({ waitUntil: "networkidle0" });
   await page.waitForSelector('[data-testid="timeline"]');
   tl = await bars();
-  ok("the edited timeline survives a reload", tl.length === 2 && (await readDoc()).schemaVersion === 5, JSON.stringify(tl));
+  ok("the edited timeline survives a reload", tl.length === 2 && (await readDoc()).schemaVersion === 6, JSON.stringify(tl));
   await page.screenshot({ path: `${SHOTS}/p3-03-timeline.png` });
 
   // ---------- C3: video export ----------
@@ -725,7 +725,7 @@ try {
   await page.waitForSelector('[data-testid="music-bar"]');
   await saved();
   doc = await readDoc();
-  ok("MP3 is imported by signature with its length", doc.assets.some((a) => a.mime === "audio/mpeg" && Math.abs(a.duration - 3) < 0.2) && doc.schemaVersion === 5);
+  ok("MP3 is imported by signature with its length", doc.assets.some((a) => a.mime === "audio/mpeg" && Math.abs(a.duration - 3) < 0.2) && doc.schemaVersion === 6);
   await click(L("Remove music"));
   await saved();
 

@@ -27,10 +27,10 @@ export async function captureVersion(project: Project, kind: VersionKind, images
  * Automatic versions: one when a project is opened in a state no version covers yet, and then
  * at most one every ten minutes while it keeps changing (see shouldAutoVersion).
  */
-export function useVersionHistory(images: ImageStore) {
+export function useVersionHistory(images: ImageStore, enabled = true) {
   const projectId = useEditorStore((s) => s.project?.id);
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !enabled) return;
     let busy = false;
     let stopped = false;
     const check = async () => {
@@ -52,5 +52,5 @@ export function useVersionHistory(images: ImageStore) {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [projectId, images]);
+  }, [projectId, images, enabled]);
 }

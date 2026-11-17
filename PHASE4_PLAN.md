@@ -149,10 +149,10 @@ creative features), 18 (database) and 21 (security).
 - [x] D2. Advanced asset management (done 2026-11-17, except the two items in D2b)
 - [ ] D2b. SVG import with sanitising, bulk select in the Assets tab (not built yet)
 - [x] D3. Advanced layouts (done 2026-11-17)
-- [ ] D4. Template creator
-- [ ] D5. Advanced image tools
-- [ ] D6. Cloud synchronization (blocked: decisions 1)
-- [ ] D7. AI assistant integration (blocked: decisions 2); D7a Smart Seamless Assistant is not blocked
+- [x] D4. Template creator (done 2026-11-17; text and video placeholders not built, see limits)
+- [x] D5. Advanced image tools (done 2026-11-17; background removal skipped for the initial release)
+- [ ] D6. Cloud synchronization (skipped for the initial release, user decision 2026-11-17)
+- [ ] D7. AI assistant integration (skipped for the initial release, user decision 2026-11-17)
 
 ### D1: what was built
 
@@ -266,5 +266,73 @@ creative features), 18 (database) and 21 (security).
   a text box's snapped bottom edge can end a pixel or two off; touch has no way to switch snapping
   off; desktop Chrome only, not tried on a phone.
 
-Notes for the next session: continue with D4 (template creator), then D5. D2b is small and can
-be done with either.
+### D5: what was built
+
+- Document schema **version 6**: three optional fields on image elements, `crop` (`x`, `y` from
+  -1 to 1, `zoom` 1 to 5, `turns` 0 to 3), `duotone` (dark colour, light colour, amount) and
+  `overlay` (colour, opacity). Absent means exactly the old behaviour, so the migration from
+  version 5 only changes the version number.
+- `frameCrop` in `geometry.ts` (pure): cover the frame, zoom in, pan across what is hidden, measured
+  on the photo after quarter turns. `reshapeFrame`: aspect presets around the frame's centre.
+- `adjust.ts` (pure): `applyDuotone`, `applyColorOverlay`, and `applyLook` (adjustments, then
+  duotone, then overlay), used by the main thread and the worker alike, so preview and export share
+  one path.
+- Properties panel for photos: Crop (zoom, move left / right, move up / down, rotate photo 90
+  degrees, reset), frame shape presets (as photo, 1:1, 4:5, 3:4, 16:9, 9:16), Color effects
+  (duotone with two colours and strength, colour overlay with colour and opacity), and "Turn into
+  empty frame". Replacing a photo resets its crop.
+
+### D5: how it was verified
+
+- 13 new unit tests (crop math incl. bounds for many pan / zoom values, quarter turns, reshape,
+  duotone and overlay pixels, order of the look, schema limits, version 5 document opening).
+- `tests/e2e-phase4-tools.mjs`, 19 checks with exported PNG pixels: default centre crop, pan, zoom,
+  reset, rotate inside the frame, undo, frame shapes, duotone values on the ramp, **preview pixel
+  equals export pixel**, strength 0, overlay blend, nothing tinted outside the frame, reload.
+
+### D5: limits
+
+- Crop is set with sliders. There is no dragging of the photo inside its frame on the canvas.
+- Crop, duotone and overlay are for photos only, not for video frames.
+- Rotating inside the frame is in quarter turns only (no free straighten).
+- No background removal (skipped for the initial release).
+- Verified in desktop Chrome only.
+
+### D4: what was built
+
+- **Template mode**: `/editor?template=<id>` opens a user template in the normal editor. Autosave
+  writes to the template (`saveTemplateDoc`: document, name, cover) and never to a project;
+  version history is off; the top bar shows a "Template" badge and "Template settings"
+  (category, description, frame count, "Turn all photos into empty frames").
+- Pure rules in `src/templates/model.ts`: categories, input cleaning, `filterTemplates` (text incl.
+  description, category, ratio, slide count, favorites, source; recents first), `countFrames`,
+  `stripPhotos`.
+- Library: "Edit template", "Duplicate" / "Make my own copy" (built-in templates become editable
+  that way), "Export file", "Import template", description in the preview and in search.
+- **Template files** (`src/templates/file.ts`, `transfer.ts`): one `.cctemplate` zip with the
+  document, only the asset files it uses, video posters and the cover. Import validates
+  everything: format and version, the document through `parseProject`, plain asset ids only, file
+  type by bytes, size and count limits; files already on the device are not overwritten.
+- `Dashboard` opens a tab from `?tab=`, so "Back to templates" lands on the right tab.
+
+### D4: how it was verified
+
+- 12 new unit tests (rules, round trip, eight kinds of bad file, storage, duplicate, export on one
+  database and import on an empty one).
+- `tests/e2e-phase4-tools.mjs`, 18 checks: save a project as template, edit it in template mode
+  (rename, add text, details, empty the frames, undo), no project created, reload, category
+  filter, search by description, export file, duplicate, import, refusal of a bogus file, copy of a
+  built-in, project made from the edited template.
+- All suites after D4 and D5: 168 unit tests; e2e 36/36, 28/28, 127/127, 40/40, 24/24, 38/38.
+
+### D4: limits
+
+- **Not built:** marking text as placeholder text, video placeholders, and a "new blank
+  template" button (start from a project, a copy of a built-in, or an imported file instead).
+- Custom fonts are referenced by name in a template file but the font file is not included; on a
+  device without that font the text falls back.
+- Deleting a template does not free its files; they show as unused in the Assets tab.
+- Template files were only exported and imported in desktop Chrome, on one machine.
+
+Notes for the next session: every Phase 4 checkpoint that is in scope for the initial release is
+done except D2b (SVG import, bulk select in Assets). D6, D7 and background removal are skipped.

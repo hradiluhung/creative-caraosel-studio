@@ -59,6 +59,7 @@ export interface StoredTemplate {
   id: string;
   name: string;
   category: string;
+  description?: string;
   /** A complete project document: templates are editable objects, never flattened images. */
   doc: unknown;
   thumbnail: Blob | null;
@@ -304,6 +305,21 @@ export async function listStoredTemplates(): Promise<StoredTemplate[]> {
 }
 export async function putStoredTemplate(template: StoredTemplate): Promise<void> {
   await (await db()).put("templates", template);
+}
+export async function getStoredTemplate(id: string): Promise<StoredTemplate | undefined> {
+  return (await db()).get("templates", id);
+}
+/** Change parts of a stored template in one transaction. Does nothing when it no longer exists. */
+export async function patchStoredTemplate(id: string, patch: Partial<Omit<StoredTemplate, "id" | "createdAt">>): Promise<boolean> {
+  const tx = (await db()).transaction("templates", "readwrite");
+  const stored = await tx.store.get(id);
+  if (stored) await tx.store.put({ ...stored, ...patch });
+  await tx.done;
+  return !!stored;
+}
+/** True when an asset with this id is already stored (its content is then kept as it is). */
+export async function hasAsset(id: string): Promise<boolean> {
+  return (await (await db()).getKey("assets", id)) !== undefined;
 }
 export async function deleteStoredTemplate(id: string): Promise<void> {
   await (await db()).delete("templates", id);

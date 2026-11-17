@@ -2,9 +2,9 @@
  * Decoded image cache shared by the editor canvas, thumbnails and the exporter.
  * The blob loader is injected so rendering stays independent of persistence.
  */
-import { coverCrop } from "@/document/geometry";
-import { isNeutral, type Adjustments, type ImageElement, type VideoElement } from "@/document/schema";
-import { applyAdjustments } from "./adjust";
+import { frameCrop } from "@/document/geometry";
+import { isNeutralLook, type ImageElement, type ImageLook, type VideoElement } from "@/document/schema";
+import { applyLook } from "./adjust";
 import type { AdjustRequest, AdjustResponse } from "./adjust.worker";
 import { MusicPlayer } from "./musicPlayer";
 import { VideoPool, type VideoFrameOptions } from "./videoPool";
@@ -153,17 +153,18 @@ export class ImageStore implements RenderResources {
     if (!el.assetId) return undefined;
     const image = this.getImage(el.assetId);
     if (!image) return undefined;
-    const crop = coverCrop(image.naturalWidth, image.naturalHeight, el.width, el.height);
+    const crop = frameCrop(image.naturalWidth, image.naturalHeight, el.width, el.height, el.crop);
+    const look: ImageLook = { adjustments: el.adjustments, duotone: el.duotone, overlay: el.overlay };
     // Never upscale beyond the source pixels, and respect the caller's size budget.
     const scale = Math.min(opts.quality, crop.width / el.width, opts.maxSide / Math.max(el.width, el.height));
     const w = Math.max(1, Math.round(el.width * scale));
     const h = Math.max(1, Math.round(el.height * scale));
-    const slot = [el.assetId, Math.round(el.width), Math.round(el.height), el.flipX, el.flipY, w, h].join("|");
-    const key = `${slot}|${JSON.stringify(el.adjustments)}`;
+    const slot = [el.assetId, Math.round(el.width), Math.round(el.height), el.flipX, el.flipY, w, h, el.crop ? JSON.stringify(el.crop) : ""].join("|");
+    const key = `${slot}|${JSON.stringify(look)}`;
     const hit = this.touch(key);
     if (hit) return hit;
 
-    const neutral = isNeutral(el.adjustments);
+    const neutral = isNeutralLook(look);
     const draw = (cw: number, ch: number) => {
       const canvas = document.createElement("canvas");
       canvas.width = cw;
@@ -173,7 +174,18 @@ export class ImageStore implements RenderResources {
       ctx.imageSmoothingQuality = "high";
       ctx.translate(el.flipX ? cw : 0, el.flipY ? ch : 0);
       ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
-      ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, cw, ch);
+      if (crop.turns === 0) {
+        ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, cw, ch);
+      } else {
+        // Map the turned photo onto the canvas, then place the unturned pixels into that space.
+        ctx.scale(cw / crop.width, ch / crop.height);
+        ctx.translate(-crop.x, -crop.y);
+        if (crop.turns === 1) ctx.translate(crop.sourceWidth, 0);
+        else if (crop.turns === 2) ctx.translate(crop.sourceWidth, crop.sourceHeight);
+        else ctx.translate(0, crop.sourceHeight);
+        ctx.rotate((crop.turns * Math.PI) / 2);
+        ctx.drawImage(image, 0, 0);
+      }
       return { canvas, ctx };
     };
     const processNow = (cw: number, ch: number) => {
@@ -181,7 +193,7 @@ export class ImageStore implements RenderResources {
       if (!out) return undefined;
       if (!neutral) {
         const pixels = out.ctx.getImageData(0, 0, cw, ch);
-        applyAdjustments(pixels.data, cw, ch, el.adjustments);
+        applyLook(pixels.data, cw, ch, look);
         out.ctx.putImageData(pixels, 0, 0);
       }
       return out.canvas;
@@ -219,7 +231,7 @@ export class ImageStore implements RenderResources {
       const pixels = data
         ? new ImageData(data as Uint8ClampedArray<ArrayBuffer>, source.width, source.height)
         : source.getContext("2d")!.getImageData(0, 0, source.width, source.height);
-      if (!data) applyAdjustments(pixels.data, source.width, source.height, el.adjustments);
+      if (!data) applyLook(pixels.data, source.width, source.height, look);
       ctx?.putImageData(pixels, 0, 0);
       return c;
     };
@@ -230,12 +242,11 @@ export class ImageStore implements RenderResources {
     const job = this.jobs.get(slot);
     if (job?.key !== key) {
       if (job) window.clearTimeout(job.timer);
-      const adjustments = el.adjustments;
       const timer = window.setTimeout(() => {
         const source = this.base(slot, () => draw(w, h)?.canvas);
         const pixels = source?.getContext("2d")?.getImageData(0, 0, w, h);
         if (!source || !pixels) return;
-        void this.adjustOffThread(pixels.data, w, h, adjustments).then((data) => {
+        void this.adjustOffThread(pixels.data, w, h, look).then((data) => {
           if (data) {
             this.remember(key, adjusted(source, data));
           } else {
@@ -296,7 +307,7 @@ export class ImageStore implements RenderResources {
   }
 
   /** Full-resolution pass in a Web Worker, with a main-thread fallback if workers are unavailable. */
-  private adjustOffThread(data: Uint8ClampedArray, width: number, height: number, adjustments: Adjustments): Promise<Uint8ClampedArray | null> {
+  private adjustOffThread(data: Uint8ClampedArray, width: number, height: number, look: ImageLook): Promise<Uint8ClampedArray | null> {
     if (this.worker === undefined) {
       try {
         this.worker = new Worker(new URL("./adjust.worker.ts", import.meta.url), { type: "module" });
@@ -318,7 +329,7 @@ export class ImageStore implements RenderResources {
     const onMainThread = () =>
       new Promise<Uint8ClampedArray>((resolve) =>
         window.setTimeout(() => {
-          applyAdjustments(data, width, height, adjustments);
+          applyLook(data, width, height, look);
           resolve(data);
         }, 0),
       );
@@ -327,7 +338,7 @@ export class ImageStore implements RenderResources {
     return new Promise<Uint8ClampedArray | null>((resolve) => {
       const id = ++this.jobId;
       this.waiting.set(id, resolve);
-      const request: AdjustRequest = { id, width, height, adjustments, buffer: data.buffer as ArrayBuffer };
+      const request: AdjustRequest = { id, width, height, look, buffer: data.buffer as ArrayBuffer };
       worker.postMessage(request, [request.buffer]);
     });
   }

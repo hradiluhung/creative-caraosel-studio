@@ -143,6 +143,50 @@ export function coverCrop(naturalW: number, naturalH: number, boxW: number, boxH
   return { x: 0, y: (naturalH - height) / 2, width: naturalW, height };
 }
 
+export interface FrameCrop extends Crop {
+  /** Quarter turns clockwise. The rectangle is measured on the photo after turning it. */
+  turns: 0 | 1 | 2 | 3;
+  /** Size of the photo after turning it. */
+  sourceWidth: number;
+  sourceHeight: number;
+}
+
+/**
+ * The part of a photo a frame shows: cover the frame, then zoom in and pan inside what is hidden.
+ * Without `crop` this is exactly `coverCrop` (centred).
+ */
+export function frameCrop(
+  naturalW: number,
+  naturalH: number,
+  boxW: number,
+  boxH: number,
+  crop?: { x: number; y: number; zoom: number; turns: 0 | 1 | 2 | 3 },
+): FrameCrop {
+  const turns = crop?.turns ?? 0;
+  const sourceWidth = turns % 2 ? naturalH : naturalW;
+  const sourceHeight = turns % 2 ? naturalW : naturalH;
+  const cover = coverCrop(sourceWidth, sourceHeight, boxW, boxH);
+  const zoom = Math.max(1, crop?.zoom ?? 1);
+  const width = cover.width / zoom;
+  const height = cover.height / zoom;
+  const pan = (v: number | undefined) => (Math.min(1, Math.max(-1, v ?? 0)) + 1) / 2;
+  return {
+    x: Math.max(0, sourceWidth - width) * pan(crop?.x),
+    y: Math.max(0, sourceHeight - height) * pan(crop?.y),
+    width,
+    height,
+    turns,
+    sourceWidth,
+    sourceHeight,
+  };
+}
+
+/** New frame size for an aspect ratio preset: same width and centre, new height. */
+export function reshapeFrame(el: { x: number; y: number; width: number; height: number }, ratio: number) {
+  const height = Math.max(4, Math.round(el.width / ratio));
+  return { x: el.x, y: Math.round(el.y + el.height / 2 - height / 2), width: el.width, height };
+}
+
 /** Largest size with the natural aspect ratio that fits inside max bounds. */
 export function fitWithin(naturalW: number, naturalH: number, maxW: number, maxH: number) {
   const scale = Math.min(maxW / naturalW, maxH / naturalH, 1);

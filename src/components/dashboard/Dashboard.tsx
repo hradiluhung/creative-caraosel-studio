@@ -81,6 +81,12 @@ export function Dashboard() {
   const [renaming, setRenaming] = useState<{ meta: ProjectMeta; name: string } | null>(null);
   const [deleting, setDeleting] = useState<ProjectMeta | null>(null);
   const [tab, setTab] = useState<Tab>("projects");
+  useEffect(() => {
+    // Links such as "Back to templates" open a specific tab.
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (wanted === "templates" || wanted === "assets" || wanted === "brand") setTab(wanted);
+  }, []);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(

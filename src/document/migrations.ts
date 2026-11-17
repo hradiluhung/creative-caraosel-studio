@@ -64,6 +64,8 @@ const MIGRATIONS: Record<number, Migration> = {
   },
   // Version 5 (Phase 3, audio): optional Slide.audio (background music) and audio assets.
   4: (doc) => ({ ...doc, schemaVersion: 5 }),
+  // Version 6 (Phase 4, image tools): optional crop, duotone and overlay on image elements.
+  5: (doc) => ({ ...doc, schemaVersion: 6 }),
 };
 
 export class DocumentError extends Error {

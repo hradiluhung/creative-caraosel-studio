@@ -16,18 +16,21 @@ import {
   ImagePlus,
   Italic,
   Lock,
+  RotateCw,
   Trash2,
   Unlock,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { getSurface } from "@/document/geometry";
+import { getSurface, reshapeFrame } from "@/document/geometry";
 import {
   BLEND_MODES,
   IMAGE_MASKS,
   isNeutral,
+  MAX_CROP_ZOOM,
   NEUTRAL_ADJUSTMENTS,
+  NEUTRAL_CROP,
   type Adjustments,
   type DesignElement,
   type ImageElement,
@@ -48,7 +51,7 @@ import { measureTextHeight } from "@/render/scene";
 import { selectSelectedElements, useEditorStore } from "@/store/editorStore";
 import { PREF, setPref, usePref } from "@/lib/prefs";
 import { Button, IconButton, Label, NumberField, Segmented, Select, Slider, TextInput } from "../ui/primitives";
-import { alignSelected, replaceImage, type AlignEdge } from "./actions";
+import { alignSelected, makePlaceholders, replaceImage, type AlignEdge } from "./actions";
 import { ColorControl } from "./ColorControl";
 import { FontPicker, useFontCatalog } from "./FontPicker";
 import { BackgroundControls, Section } from "./InsertPanel";
@@ -216,7 +219,7 @@ const NO_PRESETS: FilterPreset[] = [];
  * The thumb follows the finger immediately (local state); the document is updated at most
  * once per animation frame, so a fast drag never queues up more work than the screen can show.
  */
-function AdjustSlider({ label, min, value, onChange }: { label: string; min: number; value: number; onChange: (v: number) => void }) {
+function AdjustSlider({ label, min, max = 100, value, onChange }: { label: string; min: number; max?: number; value: number; onChange: (v: number) => void }) {
   const [live, setLive] = useState<number | null>(null);
   const pending = useRef<{ value: number; frame: number } | null>(null);
   const commit = useRef(onChange);
@@ -232,7 +235,7 @@ function AdjustSlider({ label, min, value, onChange }: { label: string; min: num
       <Slider
         label={label}
         min={min}
-        max={100}
+        max={max}
         step={1}
         value={live ?? value}
         onChange={(v) => {
@@ -282,6 +285,14 @@ function FrameStyleControls({ el }: { el: ImageElement | VideoElement }) {
     </>
   );
 }
+
+const FRAME_SHAPES = [
+  { label: "1:1", ratio: 1 },
+  { label: "4:5", ratio: 4 / 5 },
+  { label: "3:4", ratio: 3 / 4 },
+  { label: "16:9", ratio: 16 / 9 },
+  { label: "9:16", ratio: 9 / 16 },
+];
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
@@ -355,6 +366,10 @@ function ImageProps({ el }: { el: ImageElement }) {
   const [presetName, setPresetName] = useState("");
   const [showAdjust, setShowAdjust] = useState(false);
   const saved = usePref<FilterPreset[]>(PREF.imagePresets, NO_PRESETS);
+  const asset = useEditorStore((s) => s.project?.assets.find((a) => a.id === el.assetId));
+  const crop = el.crop ?? NEUTRAL_CROP;
+  const natural = asset && asset.width > 0 && asset.height > 0 ? (crop.turns % 2 ? asset.height / asset.width : asset.width / asset.height) : null;
+  const setCrop = (patch: Partial<typeof crop>, coalesce = true) => set({ crop: { ...crop, ...patch } }, coalesce ? `crop:${Object.keys(patch)[0]}` : undefined);
   const applyPreset = (preset: FilterPreset | null) =>
     set({ adjustments: { ...NEUTRAL_ADJUSTMENTS, ...(preset?.adjustments ?? {}) }, filter: preset?.name ?? null });
 
@@ -382,7 +397,64 @@ function ImageProps({ el }: { el: ImageElement }) {
           </p>
         )}
         <FrameStyleControls el={el} />
-        <p className="text-[11px] text-muted">The photo always fills its frame. Resize the frame from a side handle to crop.</p>
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Frame shape">
+          {[...(natural ? [{ label: "As photo", ratio: natural }] : []), ...FRAME_SHAPES].map((shape) => (
+            <button
+              key={shape.label}
+              type="button"
+              aria-label={`Frame shape ${shape.label}`}
+              aria-pressed={Math.abs(el.width / el.height - shape.ratio) < 0.01}
+              onClick={() => set(reshapeFrame(el, shape.ratio))}
+              className="h-6 rounded-full border border-line px-2 text-[11px] font-medium text-muted hover:text-ink aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg"
+            >
+              {shape.label}
+            </button>
+          ))}
+        </div>
+        {el.assetId && (
+          <Button size="sm" variant="ghost" className="-ml-2" onClick={() => makePlaceholders([el.id])}>
+            Turn into empty frame
+          </Button>
+        )}
+      </Section>
+
+      {el.assetId && (
+        <Section title="Crop">
+          <AdjustSlider label="Zoom" min={100} max={MAX_CROP_ZOOM * 100} value={Math.round(crop.zoom * 100)} onChange={(v) => setCrop({ zoom: v / 100 })} />
+          <AdjustSlider label="Move left / right" min={-100} value={Math.round(crop.x * 100)} onChange={(v) => setCrop({ x: v / 100 })} />
+          <AdjustSlider label="Move up / down" min={-100} value={Math.round(crop.y * 100)} onChange={(v) => setCrop({ y: v / 100 })} />
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => setCrop({ turns: ((crop.turns + 1) % 4) as 0 | 1 | 2 | 3 }, false)}>
+              <RotateCw className="h-3.5 w-3.5" /> Rotate photo 90°
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!el.crop} onClick={() => set({ crop: undefined })}>
+              Reset crop
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted">The photo always fills its frame. Moving only has an effect where the frame hides part of the photo: zoom in, or use a frame with a different shape.</p>
+        </Section>
+      )}
+
+      <Section title="Color effects">
+        <Toggle
+          label="Duotone"
+          checked={!!el.duotone}
+          onChange={(on) => set({ duotone: on ? { shadow: "#1b1f5e", highlight: "#ffd9a8", amount: 100 } : undefined })}
+        />
+        {el.duotone && (
+          <>
+            <ColorControl label="Duotone dark color" value={el.duotone.shadow} onChange={(shadow) => set({ duotone: { ...el.duotone!, shadow } }, "duo-shadow")} />
+            <ColorControl label="Duotone light color" value={el.duotone.highlight} onChange={(highlight) => set({ duotone: { ...el.duotone!, highlight } }, "duo-highlight")} />
+            <AdjustSlider label="Duotone strength" min={0} value={el.duotone.amount} onChange={(amount) => set({ duotone: { ...el.duotone!, amount } }, "duo-amount")} />
+          </>
+        )}
+        <Toggle label="Color overlay" checked={!!el.overlay} onChange={(on) => set({ overlay: on ? { color: "#e5388a", opacity: 35 } : undefined })} />
+        {el.overlay && (
+          <>
+            <ColorControl label="Overlay color" value={el.overlay.color} onChange={(color) => set({ overlay: { ...el.overlay!, color } }, "overlay-color")} />
+            <AdjustSlider label="Overlay opacity" min={0} value={el.overlay.opacity} onChange={(opacity) => set({ overlay: { ...el.overlay!, opacity } }, "overlay-opacity")} />
+          </>
+        )}
       </Section>
 
       <Section title="Filters">

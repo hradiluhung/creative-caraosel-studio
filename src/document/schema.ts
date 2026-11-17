@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const finite = z.number().refine(Number.isFinite, "must be finite");
 const hexColor = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "expected #RRGGBB or #RRGGBBAA");
@@ -83,6 +83,23 @@ export const adjustmentsSchema = z.object({
   grain: strength,
 });
 
+export const MAX_CROP_ZOOM = 5;
+/**
+ * How a photo sits inside its frame. Absent means: centred, filling the frame, not turned.
+ * x and y pan across whatever the frame hides (-1 = one end, 0 = centre, 1 = the other end).
+ */
+export const imageCropSchema = z.object({
+  x: z.number().min(-1).max(1),
+  y: z.number().min(-1).max(1),
+  zoom: z.number().min(1).max(MAX_CROP_ZOOM),
+  /** Quarter turns clockwise of the photo inside the frame. */
+  turns: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
+});
+/** Two-colour look: dark tones take `shadow`, bright tones `highlight`. */
+export const duotoneSchema = z.object({ shadow: hexColor, highlight: hexColor, amount: strength });
+/** A flat colour laid over the photo. */
+export const colorOverlaySchema = z.object({ color: hexColor, opacity: strength });
+
 export const IMAGE_MASKS = ["rect", "ellipse", "arch", "triangle", "hexagon", "star", "heart"] as const;
 export const imageMaskSchema = z.enum(IMAGE_MASKS);
 
@@ -100,6 +117,9 @@ export const imageElementSchema = z.object({
   filter: z.string().nullable(),
   borderColor: hexColor,
   borderWidth: z.number().min(0),
+  crop: imageCropSchema.optional(),
+  duotone: duotoneSchema.optional(),
+  overlay: colorOverlaySchema.optional(),
 });
 
 /** Upper bound for a manually set slide duration and for a clip's start time. */
@@ -315,6 +335,20 @@ export const NEUTRAL_ADJUSTMENTS: Adjustments = {
   vignette: 0,
   grain: 0,
 };
+
+export type ImageCrop = z.infer<typeof imageCropSchema>;
+export type Duotone = z.infer<typeof duotoneSchema>;
+export type ColorOverlay = z.infer<typeof colorOverlaySchema>;
+export const NEUTRAL_CROP: ImageCrop = { x: 0, y: 0, zoom: 1, turns: 0 };
+/** Everything that changes a photo's pixels after cropping. */
+export interface ImageLook {
+  adjustments: Adjustments;
+  duotone?: Duotone;
+  overlay?: ColorOverlay;
+}
+export function isNeutralLook(look: ImageLook): boolean {
+  return isNeutral(look.adjustments) && !(look.duotone && look.duotone.amount > 0) && !(look.overlay && look.overlay.opacity > 0);
+}
 
 export function isNeutral(a: Adjustments): boolean {
   return (Object.keys(NEUTRAL_ADJUSTMENTS) as Array<keyof Adjustments>).every((k) => a[k] === 0);

@@ -58,11 +58,17 @@ export async function replaceImage(elementId: string, file: File): Promise<strin
   try {
     const ref = await importImageFile(file);
     const s = store();
-    s.commit((p) => updateElements(addAssetRef(p, ref), s.activeSurfaceId, [elementId], { assetId: ref.id } as Partial<DesignElement>));
+    s.commit((p) => updateElements(addAssetRef(p, ref), s.activeSurfaceId, [elementId], { assetId: ref.id, crop: undefined } as Partial<DesignElement>));
     return null;
   } catch (e) {
     return e instanceof Error ? e.message : "The image could not be imported.";
   }
+}
+
+/** Turn photos back into empty frames (for templates). Box, mask, border and look are kept. One undo step. */
+export function makePlaceholders(ids: string[]) {
+  const s = store();
+  s.commit((p) => updateElements(p, s.activeSurfaceId, ids, (el) => (el.type === "image" && el.assetId ? ({ assetId: null, crop: undefined } as Partial<DesignElement>) : {})));
 }
 
 export function insertShape(shape: ShapeKind) {

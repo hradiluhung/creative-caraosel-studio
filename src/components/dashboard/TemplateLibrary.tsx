@@ -1,11 +1,14 @@
 "use client";
 
-import { Search, Star, Trash2 } from "lucide-react";
+import { Copy, Download, Pencil, Search, Star, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aspectRatioLabel, getExportFrames } from "@/document/geometry";
 import { getAssetBlob, getAssetPoster } from "@/persistence/db";
 import { loadCustomFonts } from "@/persistence/customFonts";
-import { createProjectFromTemplate, deleteUserTemplate, listAllTemplates, type TemplateInfo } from "@/templates";
+import { createProjectFromTemplate, deleteUserTemplate, duplicateTemplate, listAllTemplates, type TemplateInfo } from "@/templates";
+import { TEMPLATE_FILE_EXTENSION, templateFileName } from "@/templates/file";
+import { DEFAULT_TEMPLATE_FILTER, filterTemplates, type SlideCountFilter } from "@/templates/model";
+import { exportTemplateFile, importTemplateFile } from "@/templates/transfer";
 import { cn } from "@/lib/cn";
 import { PREF, pushRecent, toggleInList, usePref } from "@/lib/prefs";
 import { Button, Dialog, IconButton, Select, TextInput } from "../ui/primitives";
@@ -63,7 +66,7 @@ function useTemplateThumbs(requests: Array<{ key: string; template: TemplateInfo
   return thumbs;
 }
 
-function TemplatePreview({ template, onClose }: { template: TemplateInfo; onClose: () => void }) {
+function TemplatePreview({ template, onClose, onChanged }: { template: TemplateInfo; onClose: () => void; onChanged: (notice: string) => void }) {
   const [name, setName] = useState(template.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +83,30 @@ function TemplatePreview({ template, onClose }: { template: TemplateInfo; onClos
       setError(e instanceof Error ? e.message : "Could not create the project.");
       setBusy(false);
     }
+  };
+  const act = async (work: () => Promise<string | void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const notice = await work();
+      if (notice) {
+        onChanged(notice);
+        onClose();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That did not work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const download = async () => {
+    const blob = await exportTemplateFile(template);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = templateFileName(template.name);
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
   return (
     <Dialog
@@ -109,7 +136,23 @@ function TemplatePreview({ template, onClose }: { template: TemplateInfo; onClos
             </div>
           ))}
         </div>
+        {template.description && <p className="text-[13px]">{template.description}</p>}
         <p className="text-xs text-muted">Everything stays editable: text, colors, shapes and photo frames. Dashed frames are waiting for your photos.</p>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Template actions">
+          {template.source === "user" && (
+            <Button size="sm" disabled={busy} onClick={() => (window.location.href = `/editor?template=${encodeURIComponent(template.id)}`)}>
+              <Pencil className="h-3.5 w-3.5" /> Edit template
+            </Button>
+          )}
+          <Button size="sm" disabled={busy} onClick={() => void act(async () => (await duplicateTemplate(template), `A copy of “${template.name}” is in My templates. Open it and choose “Edit template” to change it.`))}>
+            <Copy className="h-3.5 w-3.5" /> {template.source === "user" ? "Duplicate" : "Make my own copy"}
+          </Button>
+          {template.source === "user" && (
+            <Button size="sm" disabled={busy} onClick={() => void act(download)}>
+              <Download className="h-3.5 w-3.5" /> Export file
+            </Button>
+          )}
+        </div>
         <TextInput aria-label="Project name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
         {error && <p className="text-xs text-danger">{error}</p>}
       </div>
@@ -125,6 +168,9 @@ export function TemplateLibrary() {
   const [count, setCount] = useState("");
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [preview, setPreview] = useState<TemplateInfo | null>(null);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const favorites = usePref<string[]>(PREF.templateFavorites, NONE);
   const recents = usePref<string[]>(PREF.templateRecents, NONE);
 
@@ -134,22 +180,25 @@ export function TemplateLibrary() {
   }, [refresh]);
 
   const all = useMemo(() => templates ?? [], [templates]);
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = all.filter((t) => {
-      const n = t.doc.slides.length;
-      return (
-        (!q || t.name.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)) &&
-        (!category || t.category === category) &&
-        (!ratio || aspectRatioLabel(t.doc.width, t.doc.height) === ratio) &&
-        (!count || (count === "1-3" ? n <= 3 : count === "4-6" ? n >= 4 && n <= 6 : n >= 7)) &&
-        (!onlyFavorites || favorites.includes(t.id))
-      );
-    });
-    // Recently used first, otherwise keep registry order.
-    const rank = (t: TemplateInfo) => (recents.includes(t.id) ? recents.indexOf(t.id) : 99);
-    return [...list].sort((a, b) => rank(a) - rank(b));
-  }, [all, query, category, ratio, count, onlyFavorites, favorites, recents]);
+  const shown = useMemo(
+    () => filterTemplates(all, { ...DEFAULT_TEMPLATE_FILTER, query, category, ratio, count: count as SlideCountFilter, favoritesOnly: onlyFavorites }, favorites, recents),
+    [all, query, category, ratio, count, onlyFavorites, favorites, recents],
+  );
+
+  const onImport = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const { name } = await importTemplateFile(file);
+      await refresh();
+      setNotice({ text: `“${name}” was imported into your templates.` });
+    } catch (e) {
+      setNotice({ text: e instanceof Error ? e.message : "The template file could not be imported.", error: true });
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const requests = useMemo(() => shown.filter((t) => !t.thumbnail).map((t) => ({ key: `${t.id}:0`, template: t, slide: 0 })), [shown]);
   const thumbs = useTemplateThumbs(requests);
@@ -178,7 +227,16 @@ export function TemplateLibrary() {
         <Button size="sm" className="h-8" aria-pressed={onlyFavorites} variant={onlyFavorites ? "primary" : "outline"} onClick={() => setOnlyFavorites(!onlyFavorites)}>
           <Star className="h-3.5 w-3.5" /> Favorites
         </Button>
+        <input ref={fileRef} type="file" accept={`${TEMPLATE_FILE_EXTENSION},application/zip`} hidden data-testid="template-file-input" onChange={(e) => void onImport(e.target.files?.[0])} />
+        <Button size="sm" className="ml-auto h-8" disabled={importing} onClick={() => fileRef.current?.click()}>
+          <Upload className="h-3.5 w-3.5" /> {importing ? "Importing…" : "Import template"}
+        </Button>
       </div>
+      {notice && (
+        <p role={notice.error ? "alert" : "status"} data-testid="template-notice" className={cn("mb-6 rounded-md border px-3 py-2 text-xs", notice.error ? "border-danger/40 text-danger" : "border-line text-muted")}>
+          {notice.text}
+        </p>
+      )}
 
       {shown.length === 0 ? (
         <p className="py-16 text-center text-muted">No template matches these filters.</p>
@@ -188,7 +246,7 @@ export function TemplateLibrary() {
             const src = t.thumbnail ? userThumbs[t.id] : thumbs[`${t.id}:0`];
             const fav = favorites.includes(t.id);
             return (
-              <article key={t.id} className="group relative">
+              <article key={t.id} className="group relative" data-testid="template-card" data-source={t.source}>
                 <button type="button" onClick={() => setPreview(t)} aria-label={`Preview template ${t.name}`} className="block w-full text-left">
                   <div className="flex aspect-[4/5] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-3 transition-colors group-hover:border-line-strong">
                     {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview */}
@@ -215,7 +273,17 @@ export function TemplateLibrary() {
           })}
         </section>
       )}
-      {preview && <TemplatePreview template={preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <TemplatePreview
+          key={preview.id}
+          template={preview}
+          onClose={() => setPreview(null)}
+          onChanged={(text) => {
+            setNotice({ text });
+            void refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

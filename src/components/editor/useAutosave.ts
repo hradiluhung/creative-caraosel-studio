@@ -5,6 +5,7 @@ import { renderThumbnail } from "@/export/exporter";
 import { getExportFrames } from "@/document/geometry";
 import type { Project } from "@/document/schema";
 import { saveProject } from "@/persistence/db";
+import { saveTemplateDoc } from "@/templates";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 
@@ -15,7 +16,8 @@ const DEBOUNCE_MS = 700;
  * pending is flushed when the page is hidden or closed, which is the last
  * reliable moment on iOS before a PWA can be suspended.
  */
-export function useAutosave(images: ImageStore) {
+/** With `templateId` the document is the template itself and is written to the template store. */
+export function useAutosave(images: ImageStore, templateId: string | null = null) {
   const savedRef = useRef<Project | null>(null);
   const chainRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -37,7 +39,8 @@ export function useAutosave(images: ImageStore) {
               cover = undefined; // a failed cover must never block saving the document
             }
           }
-          await saveProject(project, cover);
+          if (templateId) await saveTemplateDoc(templateId, project, cover);
+          else await saveProject(project, cover);
           savedRef.current = project;
           const s = useEditorStore.getState();
           if (s.project === project) s.setSaveStatus("saved");
@@ -67,5 +70,5 @@ export function useAutosave(images: ImageStore) {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", flush);
     };
-  }, [images]);
+  }, [images, templateId]);
 }
