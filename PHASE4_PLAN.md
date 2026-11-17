@@ -249,5 +249,22 @@ creative features), 18 (database) and 21 (security).
 - Export of a filled layout was not tested separately (frames are ordinary image elements).
 - Verified in desktop Chrome only.
 
+### Smart guides fix (2026-11-17, requested before continuing)
+
+- Root cause: snapping lived inline in the canvas drag handler and only knew the slide lines, only
+  for a single selected element, and resizing had no snapping at all.
+- Now in `src/document/snapping.ts` (pure, 14 unit tests): slide edges and centres plus the edges
+  and centre of every other visible element; moving (single or multi-selection) and resizing (each
+  dragged edge, free corners on both axes, proportional corners on the closer axis). Guides span
+  the moving box and the target. Ctrl / Cmd held: no snapping.
+- Also fixed on the way: dragging a multi-selection saved once per selected element (several undo
+  steps); it is one undo step now.
+- Verified by `tests/e2e-snap.mjs` (24 checks with real mouse drags, including the reported case:
+  bottom edge of one object to the bottom edge of another). All other suites unchanged.
+- Limits: a single element that is rotated does not snap while resizing (it does while moving, by
+  its bounding box); no equal-spacing guides; text height is re-measured after a corner resize, so
+  a text box's snapped bottom edge can end a pixel or two off; touch has no way to switch snapping
+  off; desktop Chrome only, not tried on a phone.
+
 Notes for the next session: continue with D4 (template creator), then D5. D2b is small and can
 be done with either.

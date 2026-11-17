@@ -6,6 +6,7 @@ import { flushSync } from "react-dom";
 import { fitToViewport, getSlideOffsets, getSurface } from "@/document/geometry";
 import { getElements, updateElements } from "@/document/operations";
 import type { DesignElement, TextElement } from "@/document/schema";
+import { collectSnapTargets, edgesForAnchor, snapMove, snapResize, unionBox, type Guide, type SnapBox, type SnapTargets } from "@/document/snapping";
 import { playbackScope } from "@/document/timing";
 import { ensureFontsLoaded, FONT_FALLBACK, resolveItalic, resolveWeight } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
@@ -278,7 +279,6 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       ignoreStroke: true,
       flipEnabled: false,
       padding: 0,
-      boundBoxFunc: (oldBox, newBox) => (Math.abs(newBox.width) < 6 || Math.abs(newBox.height) < 6 ? oldBox : newBox),
     });
     contentLayer.add(backdrop, holder);
     uiLayer.add(boundaries, guides, transformer);
@@ -303,12 +303,82 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       gesture.longPress = null;
     };
     /** Abort an in-flight drag or resize without committing it. */
+    // Smart guides. Targets are collected once per gesture; the pure rules live in document/snapping.ts.
+    const snap = { targets: null as SnapTargets | null, moving: null as Map<Konva.Node, SnapBox> | null, off: false, committed: false };
+    const drawGuides = (list: Guide[]) => {
+      guides.destroyChildren();
+      for (const g of list) {
+        const points = g.axis === "x" ? [g.pos, g.from, g.pos, g.to] : [g.from, g.pos, g.to, g.pos];
+        guides.add(new Konva.Line({ points, stroke: GUIDE, strokeWidth: 1, strokeScaleEnabled: false }));
+      }
+      // Read by the end-to-end tests; has no effect on the app.
+      host.dataset.guides = list.map((g) => `${g.axis}:${Math.round(g.pos)}`).join(" ");
+    };
+    const snapThreshold = () => SNAP_PX / stage.scaleX();
+    const targetsExcept = (nodes: Konva.Node[]) => {
+      const p = store().project;
+      return p ? collectSnapTargets(p, sid(), new Set(nodes.map((n) => n.id()))) : null;
+    };
+    const toSurface = (point: { x: number; y: number }) => holder.getAbsoluteTransform().copy().invert().point(point);
+    /** Holding Ctrl or Cmd turns snapping off for the rest of the gesture step. */
+    const trackModifier = (e: MouseEvent) => {
+      snap.off = e.ctrlKey || e.metaKey;
+    };
+
+    /**
+     * Snap the whole selection while it is dragged. Runs before Konva applies a position.
+     * Konva drags every selected node on its own, so each one gets this function and works out the
+     * same box around the selection from its own position: they all receive the same correction.
+     */
+    const snapDrag = (node: Konva.Node, pos: { x: number; y: number }, evt?: Event) => {
+      const mods = evt as MouseEvent | undefined;
+      const offset = snap.moving?.get(node);
+      // Until every selected node has joined the drag, positions are not rigid yet: do not snap.
+      if (!snap.targets || !snap.moving || !offset || mods?.ctrlKey || mods?.metaKey || [...snap.moving.keys()].some((n) => !n.isDragging())) {
+        drawGuides([]);
+        return pos;
+      }
+      const origin = toSurface(pos);
+      const box = { ...offset, x: origin.x + offset.x, y: origin.y + offset.y };
+      const result = snapMove(box, snap.targets, snapThreshold());
+      drawGuides(result.guides);
+      const scale = stage.scaleX();
+      return { x: pos.x + result.dx * scale, y: pos.y + result.dy * scale };
+    };
+
+    /** Snap the edges that follow the pointer while resizing. Rotated single elements are left alone. */
+    transformer.boundBoxFunc((oldBox, newBox) => {
+      if (Math.abs(newBox.width) < 6 || Math.abs(newBox.height) < 6) return oldBox;
+      const edges = edgesForAnchor(transformer.getActiveAnchor());
+      if (!edges || !snap.targets || snap.off || Math.abs(newBox.rotation) > 1e-4) {
+        drawGuides([]);
+        return newBox;
+      }
+      const scale = stage.scaleX();
+      const topLeft = toSurface({ x: newBox.x, y: newBox.y });
+      const corner = (edges.left || edges.right) && (edges.top || edges.bottom);
+      // Konva keeps the shape for corner handles (always, or with Shift): detect it from the boxes.
+      const keepRatio = !!corner && Math.abs(newBox.width * oldBox.height - oldBox.width * newBox.height) < 1e-3 * newBox.height * oldBox.height;
+      const result = snapResize({ x: topLeft.x, y: topLeft.y, width: newBox.width / scale, height: newBox.height / scale }, edges, snap.targets, snapThreshold(), {
+        keepRatio,
+        minSize: 6 / scale,
+      });
+      drawGuides(result.guides);
+      const back = holder.getAbsoluteTransform().point({ x: result.box.x, y: result.box.y });
+      return { x: back.x, y: back.y, width: result.box.width * scale, height: result.box.height * scale, rotation: newBox.rotation };
+    });
+    transformer.on("transformstart", () => {
+      snap.off = false;
+      snap.targets = targetsExcept(transformer.nodes());
+      window.addEventListener("mousemove", trackModifier);
+    });
+
     const abortManipulation = () => {
       discardDragRef.current = true;
       stage.find(`.${ELEMENT_NAME}`).forEach((n) => n.isDragging() && n.stopDrag());
       if (transformer.isTransforming()) transformer.stopTransform();
       discardDragRef.current = false;
-      guides.destroyChildren();
+      drawGuides([]);
       setResourceTick((t) => t + 1);
     };
 
@@ -351,10 +421,22 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       cancelLongPress();
       const node = elementNodeOf(e.target);
       if (!node || (e.target as Konva.Node) !== node) return;
+      if (snap.moving) return; // another node of the same selection joining the drag
       const s = store();
       if (!s.selection.includes(node.id())) {
         s.select([node.id()]);
         transformer.nodes([node]);
+      }
+      // The dragged node carries the rest of the selection, so guides work on the box around all of it.
+      const moving = [...new Set<Konva.Node>([node, ...transformer.nodes()])];
+      const union = unionBox(moving.map((n) => n.getClientRect({ relativeTo: holder })));
+      snap.targets = targetsExcept(moving);
+      snap.moving = new Map();
+      snap.committed = false;
+      for (const n of moving) {
+        const origin = toSurface(n.getAbsolutePosition());
+        if (union) snap.moving.set(n, { x: union.x - origin.x, y: union.y - origin.y, width: union.width, height: union.height });
+        n.dragBoundFunc((pos, evt) => snapDrag(n, pos, evt));
       }
     });
 
@@ -363,37 +445,12 @@ export function CanvasStage({ images }: { images: ImageStore }) {
         setViewState({ scale: stage.scaleX(), x: stage.x(), y: stage.y() });
         return;
       }
-      const node = elementNodeOf(e.target);
-      const p = store().project;
-      if (!node || (e.target as Konva.Node) !== node || !p || transformer.nodes().length !== 1) return;
-      const surface = getSurface(p, sid());
-      if (!surface) return;
-      const box = node.getClientRect({ relativeTo: holder });
-      const threshold = SNAP_PX / stage.scaleX();
-      const xs = getSlideOffsets(p, surface.id).flatMap((o) => [o, o + p.width / 2, o + p.width]);
-      const ys = [0, surface.height / 2, surface.height];
-      const nearest = (edges: number[], lines: number[]) => {
-        let best: { delta: number; line: number } | null = null;
-        for (const edge of edges)
-          for (const line of lines) {
-            const delta = line - edge;
-            if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) best = { delta, line };
-          }
-        return best;
-      };
-      const sx = nearest([box.x, box.x + box.width / 2, box.x + box.width], xs);
-      const sy = nearest([box.y, box.y + box.height / 2, box.y + box.height], ys);
-      if (sx) node.x(node.x() + sx.delta);
-      if (sy) node.y(node.y() + sy.delta);
-      guides.destroyChildren();
-      const line = (points: number[]) =>
-        guides.add(new Konva.Line({ points, stroke: GUIDE, strokeWidth: 1, strokeScaleEnabled: false }));
-      if (sx) line([sx.line, 0, sx.line, surface.height]);
-      if (sy) line([0, sy.line, surface.width, sy.line]);
     });
 
     stage.on("dragend", (e) => {
-      guides.destroyChildren();
+      drawGuides([]);
+      elementNodeOf(e.target)?.setAttr("dragBoundFunc", undefined);
+      if (!snap.moving || [...snap.moving.keys()].every((n) => !n.isDragging())) snap.targets = snap.moving = null;
       if (e.target === stage) {
         if (gesture.tempPan) {
           gesture.tempPan = false;
@@ -404,6 +461,9 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       }
       const node = elementNodeOf(e.target);
       if (!node || (e.target as Konva.Node) !== node || discardDragRef.current) return;
+      // Every node of a multi-selection ends its own drag; the first one commits them all (one undo step).
+      if (snap.committed) return;
+      snap.committed = true;
       const moved = new Set<Konva.Node>([node, ...transformer.nodes()]);
       const next = new Map<string, { x: number; y: number }>();
       moved.forEach((n) =>
@@ -414,6 +474,9 @@ export function CanvasStage({ images }: { images: ImageStore }) {
 
     // Resize and rotate: fold the transformer's scale back into real document values
     transformer.on("transformend", () => {
+      window.removeEventListener("mousemove", trackModifier);
+      snap.targets = null;
+      drawGuides([]);
       if (discardDragRef.current) return;
       const byId = elementsById();
       const patches = new Map<string, Partial<DesignElement>>();
@@ -627,6 +690,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
       host.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("mousemove", trackModifier);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       canvasApi.fit = canvasApi.focusSlide = canvasApi.zoomBy = canvasApi.zoomTo = () => {};

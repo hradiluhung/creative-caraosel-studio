@@ -352,6 +352,14 @@ rough smoothness measurement for a slow phone.
   id; `listLibrary` adds usage (projects, templates, brand kits, versions) and the pure rules live in
   `src/persistence/libraryModel.ts`. Favorites and collections are optional fields on the stored
   asset and never enter a document. "From library" adds an `AssetRef` to the project, no copy.
+- **Smart guides are pure geometry too** (`src/document/snapping.ts`). Targets are collected once
+  per gesture: edges and centre of every slide, edges and centre of every other visible element
+  (bounding box when rotated). `snapMove` handles dragging (box around the whole selection),
+  `snapResize` handles the transformer (only the edges that follow the pointer; on a proportional
+  corner resize the closer axis snaps and the other follows). The canvas applies them through
+  Konva's `dragBoundFunc` and `boundBoxFunc`, so the snapped position is what Konva itself uses.
+  Holding Ctrl or Cmd turns snapping off. Not snapped: resizing a single rotated element,
+  rotation-aware edges, equal spacing between objects.
 - **Layouts are pure geometry** (`src/document/layouts.ts`): a kind, a count and an area give boxes.
   The editor turns boxes into placeholder image elements or moves the selected photos into them;
   the layout itself is not stored, the result is ordinary elements.
