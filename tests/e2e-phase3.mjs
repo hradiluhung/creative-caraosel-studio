@@ -338,6 +338,7 @@ try {
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Create project")]);
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
   ok("no timeline on a slide without video", !(await page.$('[data-testid="timeline"]')));
+  await page.click('[data-category="text"]');
   await clickText("Add a heading");
   await (await page.$('[data-testid="video-input"]')).uploadFile(`${FIXTURES}/clip.mp4`);
   await saved();

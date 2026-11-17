@@ -243,6 +243,7 @@ try {
   await page.$eval(L("Template name"), (n) => n.select());
   await page.keyboard.type("Trip recap");
   await page.keyboard.press("Enter");
+  await page.click('[data-category="text"]');
   await clickText("Add a heading");
   await saved();
   await click(L("Template settings"));

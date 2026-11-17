@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Circle, Film, Hexagon, ImagePlus, Library, Minus, Square, Star, Triangle, X } from "lucide-react";
+import { ArrowRight, Blend, Circle, Film, Hexagon, Image as ImageIcon, ImagePlus, LayoutGrid, Library, Minus, Palette, Shapes, Square, Star, Sticker, Triangle, Type, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SHAPE_LABELS } from "@/document/factory";
 import { getSurface } from "@/document/geometry";
@@ -11,6 +11,7 @@ import { formatSeconds } from "@/document/timing";
 import { getAssetBlob, listBrandKits, type BrandKit } from "@/persistence/db";
 import { STICKERS, type StickerDef } from "@/render/stickers";
 import { useObjectUrl } from "@/lib/useObjectUrl";
+import { cn } from "@/lib/cn";
 import { IMAGE_ACCEPT_ATTR } from "@/persistence/assets";
 import { VIDEO_ACCEPT_ATTR } from "@/persistence/video";
 import type { ImageStore } from "@/render/resources";
@@ -296,7 +297,40 @@ function LayoutsSection() {
   );
 }
 
+type AddCategory = "text" | "shapes" | "images" | "videos" | "layouts" | "stickers" | "overlays" | "brand";
+
+const ADD_CATEGORIES: Array<{ id: AddCategory; label: string; icon: ReactNode }> = [
+  { id: "text", label: "Text", icon: <Type /> },
+  { id: "shapes", label: "Shapes", icon: <Shapes /> },
+  { id: "images", label: "Images", icon: <ImageIcon /> },
+  { id: "videos", label: "Videos", icon: <Film /> },
+  { id: "layouts", label: "Layouts", icon: <LayoutGrid /> },
+  { id: "stickers", label: "Stickers", icon: <Sticker /> },
+  { id: "overlays", label: "Overlays", icon: <Blend /> },
+  { id: "brand", label: "Brand", icon: <Palette /> },
+];
+
+/** The category shown when the panel opens again: the one used last, for this visit. */
+let lastCategory: AddCategory = "text";
+const rememberCategory = (category: AddCategory) => {
+  lastCategory = category;
+};
+
+/**
+ * Everything that can be added, one category at a time: pick a category at the top, its items
+ * appear below. The background is not here: it is edited in the properties panel when nothing is
+ * selected (and with the Canvas tool on phones).
+ */
 export function InsertPanel({ images }: { images: ImageStore }) {
+  const categories = ADD_CATEGORIES;
+  const [category, setCategoryState] = useState<AddCategory>(lastCategory);
+  const setCategory = (next: AddCategory) => {
+    rememberCategory(next);
+    setCategoryState(next);
+  };
+  // Every category stays rendered and only the chosen one is shown, so uploads that are still
+  // running and their messages are not lost when switching.
+  const pane = (id: AddCategory) => ({ hidden: category !== id, "data-pane": id });
   const assets = useEditorStore((s) => s.project?.assets);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -328,170 +362,194 @@ export function InsertPanel({ images }: { images: ImageStore }) {
 
   return (
     <div>
-      <Section title="Text">
-        <div className="space-y-1.5">
-          <button type="button" onClick={() => insertText("heading")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left font-display text-xl leading-tight font-bold hover:border-line-strong hover:bg-sunken">
-            Add a heading
+      <input ref={fileRef} type="file" accept={IMAGE_ACCEPT_ATTR} multiple hidden data-testid="image-input" onChange={(e) => void onFiles(e.target.files)} />
+      <input ref={videoRef} type="file" accept={VIDEO_ACCEPT_ATTR} multiple hidden data-testid="video-input" onChange={(e) => void onVideos(e.target.files)} />
+      <div role="group" aria-label="What to add" className="grid grid-cols-4 gap-1 border-b border-line p-2.5">
+        {categories.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            aria-pressed={category === c.id}
+            data-category={c.id}
+            onClick={() => setCategory(c.id)}
+            className={cn(
+              "flex flex-col items-center justify-center gap-1 rounded-[5px] border py-2 text-[11px] font-medium [&_svg]:h-4 [&_svg]:w-4",
+              category === c.id ? "border-ink bg-sunken text-ink" : "border-transparent text-muted hover:bg-sunken hover:text-ink",
+            )}
+          >
+            {c.icon}
+            {c.label}
           </button>
-          <button type="button" onClick={() => insertText("subheading")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left text-[15px] font-semibold hover:border-line-strong hover:bg-sunken">
-            Add a subheading
-          </button>
-          <button type="button" onClick={() => insertText("body")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left text-[13px] hover:border-line-strong hover:bg-sunken">
-            Add body text
-          </button>
-        </div>
-      </Section>
+        ))}
+      </div>
 
-      <Section title="Shapes">
-        <div className="grid grid-cols-7 gap-1 md:grid-cols-4">
-          {SHAPES.map(({ kind, icon }) => (
-            <button
-              key={kind}
-              type="button"
-              title={SHAPE_LABELS[kind]}
-              aria-label={`Add ${SHAPE_LABELS[kind].toLowerCase()}`}
-              onClick={() => insertShape(kind)}
-              className="flex aspect-square items-center justify-center rounded-[5px] border border-line hover:border-line-strong hover:bg-sunken [&_svg]:h-[18px] [&_svg]:w-[18px]"
-            >
-              {icon}
+      <div {...pane("text")}>
+        <Section title="Text">
+          <div className="space-y-1.5">
+            <button type="button" onClick={() => insertText("heading")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left font-display text-xl leading-tight font-bold hover:border-line-strong hover:bg-sunken">
+              Add a heading
             </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Images">
-        <input
-          ref={fileRef}
-          type="file"
-          accept={IMAGE_ACCEPT_ATTR}
-          multiple
-          hidden
-          data-testid="image-input"
-          onChange={(e) => void onFiles(e.target.files)}
-        />
-        <Button className="w-full" disabled={busy} onClick={() => fileRef.current?.click()}>
-          <ImagePlus className="h-4 w-4" /> {busy ? "Importing…" : "Upload images"}
-        </Button>
-        <Button className="w-full" variant="ghost" onClick={() => setLibraryOpen(true)}>
-          <Library className="h-4 w-4" /> From library
-        </Button>
-        {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}
-        <p className="text-[11px] text-muted">JPG, PNG or WebP. On desktop you can also drop files on the canvas.</p>
-        {errors.length > 0 && (
-          <ul role="alert" className="space-y-1 text-xs text-danger">
-            {errors.map((e) => (
-              <li key={e}>{e}</li>
-            ))}
-          </ul>
-        )}
-        {photoAssets.length > 0 && (
-          <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
-            {photoAssets.map((asset) => {
-              const url = images.getUrl(asset.id);
-              return (
-                <button
-                  key={asset.id}
-                  type="button"
-                  title={`Add ${asset.name}`}
-                  aria-label={`Add ${asset.name}`}
-                  onClick={() => insertAsset(asset)}
-                  className="aspect-square overflow-hidden rounded-[4px] border border-line bg-sunken hover:border-ink"
-                >
-                  {url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- local blob preview
-                    <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
-                  ) : (
-                    <span className="text-[10px] text-muted">{images.isMissing(asset.id) ? "Missing" : "…"}</span>
-                  )}
-                </button>
-              );
-            })}
+            <button type="button" onClick={() => insertText("subheading")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left text-[15px] font-semibold hover:border-line-strong hover:bg-sunken">
+              Add a subheading
+            </button>
+            <button type="button" onClick={() => insertText("body")} className="block w-full rounded-[5px] border border-line px-3 py-2 text-left text-[13px] hover:border-line-strong hover:bg-sunken">
+              Add body text
+            </button>
           </div>
-        )}
-      </Section>
+        </Section>
+      </div>
 
-      <Section title="Videos">
-        <input ref={videoRef} type="file" accept={VIDEO_ACCEPT_ATTR} multiple hidden data-testid="video-input" onChange={(e) => void onVideos(e.target.files)} />
-        <Button className="w-full" disabled={videoBusy} onClick={() => videoRef.current?.click()}>
-          <Film className="h-4 w-4" /> {videoBusy ? "Importing…" : "Upload videos"}
-        </Button>
-        <p className="text-[11px] text-muted">MP4, MOV or WebM, as far as this browser can play them.</p>
-        {videoErrors.length > 0 && (
-          <ul role="alert" className="space-y-1 text-xs text-danger">
-            {videoErrors.map((e) => (
-              <li key={e}>{e}</li>
+      <div {...pane("shapes")}>
+        <Section title="Shapes">
+          <div className="grid grid-cols-7 gap-1 md:grid-cols-4">
+            {SHAPES.map(({ kind, icon }) => (
+              <button
+                key={kind}
+                type="button"
+                title={SHAPE_LABELS[kind]}
+                aria-label={`Add ${SHAPE_LABELS[kind].toLowerCase()}`}
+                onClick={() => insertShape(kind)}
+                className="flex aspect-square items-center justify-center rounded-[5px] border border-line hover:border-line-strong hover:bg-sunken [&_svg]:h-[18px] [&_svg]:w-[18px]"
+              >
+                {icon}
+              </button>
             ))}
-          </ul>
-        )}
-        {videoAssets.length > 0 && (
-          <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
-            {videoAssets.map((asset) => {
-              const url = images.getUrl(asset.id);
-              return (
-                <button
-                  key={asset.id}
-                  type="button"
-                  title={`Add ${asset.name}`}
-                  aria-label={`Add video ${asset.name}`}
-                  onClick={() => insertAsset(asset)}
-                  className="relative flex aspect-square items-center justify-center overflow-hidden rounded-[4px] border border-line bg-sunken hover:border-ink"
-                >
-                  {url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- local blob preview
-                    <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
-                  ) : images.isMissing(asset.id) ? (
-                    <span className="text-[10px] text-muted">Missing</span>
-                  ) : (
-                    <Film className="h-4 w-4 text-muted" />
-                  )}
-                  {asset.duration !== undefined && (
-                    <span className="absolute right-0.5 bottom-0.5 rounded-[3px] bg-black/65 px-1 text-[9px] leading-4 text-white tabular-nums">{formatSeconds(asset.duration)}</span>
-                  )}
-                </button>
-              );
-            })}
           </div>
-        )}
-      </Section>
+        </Section>
+      </div>
 
-      <LayoutsSection />
+      <div {...pane("images")}>
+        <Section title="Images">
+          <Button className="w-full" disabled={busy} onClick={() => fileRef.current?.click()}>
+            <ImagePlus className="h-4 w-4" /> {busy ? "Importing…" : "Upload images"}
+          </Button>
+          <Button className="w-full" variant="ghost" onClick={() => setLibraryOpen(true)}>
+            <Library className="h-4 w-4" /> From library
+          </Button>
+          {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}
+          <p className="text-[11px] text-muted">JPG, PNG or WebP. On desktop you can also drop files on the canvas.</p>
+          {errors.length > 0 && (
+            <ul role="alert" className="space-y-1 text-xs text-danger">
+              {errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+          {photoAssets.length > 0 && (
+            <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
+              {photoAssets.map((asset) => {
+                const url = images.getUrl(asset.id);
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    title={`Add ${asset.name}`}
+                    aria-label={`Add ${asset.name}`}
+                    onClick={() => insertAsset(asset)}
+                    className="aspect-square overflow-hidden rounded-[4px] border border-line bg-sunken hover:border-ink"
+                  >
+                    {url ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- local blob preview
+                      <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
+                    ) : (
+                      <span className="text-[10px] text-muted">{images.isMissing(asset.id) ? "Missing" : "…"}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+      </div>
 
-      <Section title="Stickers">
-        <div className="grid grid-cols-6 gap-1 md:grid-cols-4">
-          {STICKERS.map((def) => (
-            <button
-              key={def.id}
-              type="button"
-              title={def.name}
-              aria-label={`Add sticker ${def.name}`}
-              onClick={() => insertSticker(def)}
-              className="flex aspect-square items-center justify-center rounded-[5px] border border-line p-1.5 hover:border-line-strong hover:bg-sunken"
-            >
-              <StickerThumb def={def} />
-            </button>
-          ))}
-        </div>
-      </Section>
+      <div {...pane("videos")}>
+        <Section title="Videos">
+          <Button className="w-full" disabled={videoBusy} onClick={() => videoRef.current?.click()}>
+            <Film className="h-4 w-4" /> {videoBusy ? "Importing…" : "Upload videos"}
+          </Button>
+          <p className="text-[11px] text-muted">MP4, MOV or WebM, as far as this browser can play them.</p>
+          {videoErrors.length > 0 && (
+            <ul role="alert" className="space-y-1 text-xs text-danger">
+              {videoErrors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+          {videoAssets.length > 0 && (
+            <div className="grid grid-cols-4 gap-1.5 pt-1 md:grid-cols-3">
+              {videoAssets.map((asset) => {
+                const url = images.getUrl(asset.id);
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    title={`Add ${asset.name}`}
+                    aria-label={`Add video ${asset.name}`}
+                    onClick={() => insertAsset(asset)}
+                    className="relative flex aspect-square items-center justify-center overflow-hidden rounded-[4px] border border-line bg-sunken hover:border-ink"
+                  >
+                    {url ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- local blob preview
+                      <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
+                    ) : images.isMissing(asset.id) ? (
+                      <span className="text-[10px] text-muted">Missing</span>
+                    ) : (
+                      <Film className="h-4 w-4 text-muted" />
+                    )}
+                    {asset.duration !== undefined && (
+                      <span className="absolute right-0.5 bottom-0.5 rounded-[3px] bg-black/65 px-1 text-[9px] leading-4 text-white tabular-nums">{formatSeconds(asset.duration)}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+      </div>
 
-      <Section title="Overlays">
-        <div className="grid grid-cols-3 gap-1.5">
-          {OVERLAYS.map((o) => (
-            <button key={o.kind} type="button" aria-label={`Add overlay ${o.label}`} onClick={() => insertOverlay(o.kind)} className="group text-left">
-              <span className="block aspect-[4/3] rounded-[4px] border border-line group-hover:border-ink" style={{ background: o.preview }} />
-              <span className="mt-1 block text-[10px] text-muted">{o.label}</span>
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted">Overlays cover the whole slide and start locked. Select them in Layers.</p>
-      </Section>
+      <div {...pane("layouts")}>
+        <LayoutsSection />
+      </div>
 
-      <Section title="Brand">
-        <BrandSection />
-      </Section>
+      <div {...pane("stickers")}>
+        <Section title="Stickers">
+          <div className="grid grid-cols-6 gap-1 md:grid-cols-4">
+            {STICKERS.map((def) => (
+              <button
+                key={def.id}
+                type="button"
+                title={def.name}
+                aria-label={`Add sticker ${def.name}`}
+                onClick={() => insertSticker(def)}
+                className="flex aspect-square items-center justify-center rounded-[5px] border border-line p-1.5 hover:border-line-strong hover:bg-sunken"
+              >
+                <StickerThumb def={def} />
+              </button>
+            ))}
+          </div>
+        </Section>
+      </div>
 
-      <Section title="Background">
-        <BackgroundControls />
-      </Section>
+      <div {...pane("overlays")}>
+        <Section title="Overlays">
+          <div className="grid grid-cols-3 gap-1.5">
+            {OVERLAYS.map((o) => (
+              <button key={o.kind} type="button" aria-label={`Add overlay ${o.label}`} onClick={() => insertOverlay(o.kind)} className="group text-left">
+                <span className="block aspect-[4/3] rounded-[4px] border border-line group-hover:border-ink" style={{ background: o.preview }} />
+                <span className="mt-1 block text-[10px] text-muted">{o.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted">Overlays cover the whole slide and start locked. Select them in Layers.</p>
+        </Section>
+      </div>
+
+      <div {...pane("brand")}>
+        <Section title="Brand">
+          <BrandSection />
+        </Section>
+      </div>
+
     </div>
   );
 }

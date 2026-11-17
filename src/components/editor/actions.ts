@@ -7,7 +7,8 @@ import { addAssetRef, addElements, setSlideAudio, setSlideDuration, splitVideo, 
 import { isVideoAsset, type AssetRef, type AudioTrack, type DesignElement, type OverlayKind, type ShapeKind, type TextElement } from "@/document/schema";
 import { ensureFontsLoaded, resolveWeight } from "@/render/fonts";
 import { measureTextHeight } from "@/render/scene";
-import type { StickerDef } from "@/render/stickers";
+import { STICKERS, type StickerDef } from "@/render/stickers";
+import { originalSize, resizeAroundCenter, type OriginalSize } from "@/document/sizing";
 import { importImageFile, sniffImageType } from "@/persistence/assets";
 import { importAudioFile } from "@/persistence/audio";
 import { importVideoFile } from "@/persistence/video";
@@ -69,6 +70,27 @@ export async function replaceImage(elementId: string, file: File): Promise<strin
 export function makePlaceholders(ids: string[]) {
   const s = store();
   s.commit((p) => updateElements(p, s.activeSurfaceId, ids, (el) => (el.type === "image" && el.assetId ? ({ assetId: null, crop: undefined } as Partial<DesignElement>) : {})));
+}
+
+/** The size an element gets when it is added (see document/sizing.ts), or null if there is none. */
+export function originalSizeOf(el: DesignElement): OriginalSize | null {
+  const p = store().project;
+  if (!p) return null;
+  const asset = "assetId" in el && el.assetId ? p.assets.find((a) => a.id === el.assetId) : undefined;
+  const def = el.type === "sticker" ? STICKERS.find((d) => d.id === el.stickerId) : undefined;
+  return originalSize(el, { width: p.width, height: p.height }, { asset, stickerAspect: def ? def.width / def.height : undefined });
+}
+
+/** Back to the original size, around the same centre. Rotation, crop and style stay. One undo step. */
+export function resetSize(id: string) {
+  const s = store();
+  const surface = s.project && getSurface(s.project, s.activeSurfaceId);
+  const el = surface?.elements.find((e) => e.id === id);
+  if (!el || el.locked) return;
+  const o = originalSizeOf(el);
+  if (!o) return;
+  const height = o.height ?? measureTextHeight({ ...(el as TextElement), width: o.width });
+  s.commit((p) => updateElements(p, s.activeSurfaceId, [id], resizeAroundCenter(el, o.width, height)));
 }
 
 export function insertShape(shape: ShapeKind) {

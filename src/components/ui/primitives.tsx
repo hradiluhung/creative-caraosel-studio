@@ -146,11 +146,18 @@ export function NumberField({
     if (clamped !== value) onChange(clamped);
   };
   const range = slider && { min: Math.min(slider.min, value), max: Math.max(slider.max, value), step: slider.step ?? step };
+  // With a mouse: the compact field as always. On touch screens a field with a slider becomes
+  // "label ... value" over a full-width slider, the same shape as every other slider.
   return (
-    <div className="min-w-0">
+    <div data-slider={range ? "" : undefined} className={cn("min-w-0", range && "touch:grid touch:grid-cols-[1fr_5.5rem] touch:items-center touch:gap-x-3 touch:gap-y-1")}>
+      {range && (
+        <span aria-hidden className="hidden text-xs text-muted touch:block">
+          {label}
+        </span>
+      )}
       <div className="relative">
         {prefix && (
-          <span className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-[11px] text-muted">{prefix}</span>
+          <span className={cn("pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-[11px] text-muted", range && "touch:hidden")}>{prefix}</span>
         )}
         <input
           aria-label={label}
@@ -173,7 +180,7 @@ export function NumberField({
               commit(String(value + delta));
             }
           }}
-          className={cn(inputClass, "tabular-nums", prefix && "pl-6")}
+          className={cn(inputClass, "tabular-nums", prefix && "pl-6", range && "touch:pl-2.5 touch:text-right")}
         />
       </div>
       {range && (
@@ -190,7 +197,7 @@ export function NumberField({
             const n = Math.min(max, Math.max(min, Number(e.target.value)));
             if (Number.isFinite(n) && n !== value) onChange(n, `slider:${label}`);
           }}
-          className="mt-1 hidden h-7 w-full [@media(pointer:coarse)]:block"
+          className="hidden h-7 w-full touch:col-span-2 touch:block"
         />
       )}
     </div>
@@ -214,8 +221,12 @@ export function Slider({
   step: number;
   display?: string;
 }) {
+  // Touch screens: "label ... value" over a full-width slider, like the number fields with sliders.
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 touch:grid touch:grid-cols-[1fr_auto] touch:gap-x-3 touch:gap-y-1">
+      <span aria-hidden className="hidden text-xs text-muted touch:block">
+        {label}
+      </span>
       <input
         type="range"
         aria-label={label}
@@ -224,9 +235,9 @@ export function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-8 min-w-0 flex-1"
+        className="h-8 min-w-0 flex-1 touch:order-last touch:col-span-2 touch:h-7"
       />
-      <span className="w-10 text-right text-xs text-muted tabular-nums">{display ?? value}</span>
+      <span className="w-10 text-right text-xs text-muted tabular-nums touch:w-auto touch:text-ink">{display ?? value}</span>
     </div>
   );
 }

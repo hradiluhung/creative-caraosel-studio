@@ -131,6 +131,7 @@ try {
 
   // ---------- Accessibility: dashboard ----------
   await newProject("Phase Five");
+  await page.click('[data-category="shapes"]');
   await click(L("Add rectangle"));
   await until(async () => ({ done: (await elementCount()) === 1 }));
   await saved();
@@ -201,6 +202,7 @@ try {
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
 
   // ---------- Recovery: closing right after an edit ----------
+  await page.click('[data-category="shapes"]');
   await click(L("Add ellipse"));
   await page.reload({ waitUntil: "networkidle0" }); // no waiting for the autosave delay
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
@@ -208,6 +210,7 @@ try {
 
   // ---------- Error handling: a save that fails ----------
   await breakStorage();
+  await page.click('[data-category="shapes"]');
   await click(L("Add triangle"));
   await page.waitForSelector('[data-testid="save-status"][data-status="error"]');
   let st = await status();
@@ -218,6 +221,7 @@ try {
   await page.waitForSelector('[data-testid="save-status"][data-status="saved"]', { timeout: 9000 });
   ok("the save is retried automatically once storage works again", (await elementCount()) === 3 && !(await page.$('[data-testid="retry-save"]')));
   await breakStorage();
+  await page.click('[data-category="shapes"]');
   await click(L("Add star"));
   await page.waitForSelector('[data-testid="retry-save"]');
   await repairStorage();
@@ -240,6 +244,7 @@ try {
   const recovered = await readDoc();
   ok("restoring a saved version brings the project back with that content", recovered.id === id && recovered.name === "Phase Five" && recovered.slides[0].elements.length === 1 && recovered.schemaVersion === 6, JSON.stringify({ n: recovered.slides?.[0]?.elements?.length }));
   ok("the project's versions are still there after recovery", (await storedVersions()).some((v) => v.name === "Good state"));
+  await page.click('[data-category="shapes"]');
   await click(L("Add rectangle"));
   await saved();
   ok("the recovered project can be edited and saved again", (await elementCount()) === 2);

@@ -110,7 +110,9 @@ try {
   ok("create project with 10 slides", (await page.$$('ol[aria-label="Slides"] > li')).length === 10);
 
   // ---------- 2. Text, shapes, images ----------
+  await page.click('[data-category="text"]');
   await clickText("Add a heading");
+  await page.click('[data-category="shapes"]');
   await click(byLabel("Add star"));
   const upload = await page.$('[data-testid="image-input"]');
   await upload.uploadFile(`${FIXTURES}/photo-a.jpg`, `${FIXTURES}/photo-b.png`, `${FIXTURES}/fake.jpg`);
@@ -268,6 +270,7 @@ try {
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), clickText("Create project")]);
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
   const pid = projectId();
+  await page.click('[data-category="shapes"]');
   await click(byLabel("Add rectangle"));
   const setField = async (label, value) => {
     const f = await page.waitForSelector(byLabel(label));

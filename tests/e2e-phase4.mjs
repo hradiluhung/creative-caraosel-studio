@@ -71,6 +71,7 @@ try {
   let stored = (await until(async () => ((v) => ({ done: v.length >= 1, v }))(await storedVersions()))).v;
   ok("opening a project saves an automatic version of that state", stored.length === 1 && stored[0].kind === "auto" && stored[0].elements === 0 && stored[0].thumb > 100, JSON.stringify(stored));
 
+  await page.click('[data-category="text"]');
   await clickText("Add a heading");
   await saved();
   await click(L("Version history"));
@@ -86,6 +87,7 @@ try {
   ok("it holds the document as it was (one element)", stored.at(-1).name === "With heading" && stored.at(-1).elements === 1);
   await clickText("Close");
 
+  await page.click('[data-category="text"]');
   await clickText("Add a subheading").catch(() => clickText("Add a heading"));
   await saved();
   ok("editing continues after saving a version", (await elementCount()) === 2);
@@ -222,6 +224,7 @@ try {
 
   // Reuse in another project.
   await newProject("Lib B");
+  await page.click('[data-category="images"]');
   await clickText("From library");
   await page.waitForSelector('[data-testid="library-pick"]');
   ok("the editor picker offers stored photos from other projects", (await page.$$('[data-testid="library-pick"]')).length === 2);
@@ -292,6 +295,7 @@ try {
   const hint = () => page.$eval('[data-testid="layout-hint"]', (n) => n.textContent);
   await newProject("Layouts");
   ok("all seven layouts are offered", (await page.$$('[data-testid="layout-options"] button')).length === 7 && (await hint()).startsWith("Adds empty photo frames"));
+  await page.click('[data-category="layouts"]');
   await click('[data-layout="grid"]');
   await until(async () => ({ done: (await elementCount()) === 4 }));
   await saved();
@@ -311,6 +315,7 @@ try {
   await saved();
   const beforeArrange = await boxesOf();
   ok("with photos selected the section offers to rearrange them", (await hint()) === "Rearranges the 3 selected photos on this slide.", await hint());
+  await page.click('[data-category="layouts"]');
   await click('[data-layout="magazine"]');
   await until(async () => ({ done: JSON.stringify(await boxesOf()) !== JSON.stringify(beforeArrange) }));
   await saved();
@@ -319,6 +324,7 @@ try {
   ok("rearranging keeps the same photos and adds nothing", frames.length === 3 && frames.map((f) => f.assetId).join() === beforeArrange.map((f) => f.assetId).join() && frames.every((f) => f.assetId));
   ok("magazine: a full-width hero with the others in a row below", sortedFrames[0].w === 950 && sortedFrames[1].y === sortedFrames[2].y && sortedFrames[1].y > sortedFrames[0].y + sortedFrames[0].h && sortedFrames.every(within), JSON.stringify(sortedFrames));
   await page.screenshot({ path: `${SHOTS}/p4-05-layout-magazine.png` });
+  await page.click('[data-category="layouts"]');
   await click('[data-layout="scrapbook"]');
   await until(async () => ({ done: (await boxesOf()).some((b) => b.r !== 0) }));
   await saved();

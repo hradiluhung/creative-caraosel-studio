@@ -16,6 +16,7 @@ import {
   ImagePlus,
   Italic,
   Lock,
+  RotateCcw,
   RotateCw,
   Trash2,
   Unlock,
@@ -51,7 +52,8 @@ import { measureTextHeight } from "@/render/scene";
 import { selectSelectedElements, useEditorStore } from "@/store/editorStore";
 import { PREF, setPref, usePref } from "@/lib/prefs";
 import { Button, IconButton, Label, NumberField, Segmented, Select, Slider, TextInput } from "../ui/primitives";
-import { alignSelected, makePlaceholders, replaceImage, type AlignEdge } from "./actions";
+import { alignSelected, makePlaceholders, originalSizeOf, replaceImage, resetSize, type AlignEdge } from "./actions";
+import { hasOriginalSize } from "@/document/sizing";
 import { ColorControl } from "./ColorControl";
 import { FontPicker, useFontCatalog } from "./FontPicker";
 import { BackgroundControls, Section } from "./InsertPanel";
@@ -70,7 +72,32 @@ const WEIGHT_NAMES: Record<number, string> = {
 const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, " ");
 
 function Row({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-2 gap-2">{children}</div>;
+  // On touch screens, fields with sliders get the full width (one per line) so they can be dragged.
+  return <div className="grid grid-cols-2 gap-2 touch:has-[[data-slider]]:grid-cols-1 touch:has-[[data-slider]]:gap-3">{children}</div>;
+}
+
+/** "Size" with a way back to the size the object had when it was added. */
+function SizeHeader({ el }: { el: DesignElement }) {
+  // Recomputed when the element or the project's files change (cheap: pure arithmetic).
+  useEditorStore((s) => s.project?.assets);
+  const original = originalSizeOf(el);
+  const atOriginal = !original || hasOriginalSize(el, original);
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[11px] text-muted">Size</span>
+      {original && (
+        <button
+          type="button"
+          onClick={() => resetSize(el.id)}
+          disabled={atOriginal || el.locked}
+          title={el.type === "image" || el.type === "video" ? "Back to the size and proportions it had when it was added" : "Back to the size it had when it was added"}
+          className="inline-flex items-center gap-1 rounded-[4px] px-1 text-[11px] font-medium text-ink hover:bg-sunken disabled:text-muted disabled:opacity-60 disabled:hover:bg-transparent touch:h-8 touch:px-2"
+        >
+          <RotateCcw className="h-3 w-3" /> Reset size
+        </button>
+      )}
+    </div>
+  );
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (on: boolean) => void }) {
@@ -231,7 +258,7 @@ function AdjustSlider({ label, min, max = 100, value, onChange }: { label: strin
   }, []);
   return (
     <div>
-      <span className="text-[11px] text-muted">{label}</span>
+      <span className="text-[11px] text-muted touch:hidden">{label}</span>
       <Slider
         label={label}
         min={min}
@@ -630,6 +657,7 @@ export function PropertiesPanel() {
               <NumberField label="X position" prefix="X" value={single.x} onChange={(x) => updateSelected({ x })} />
               <NumberField label="Y position" prefix="Y" value={single.y} onChange={(y) => updateSelected({ y })} />
             </Row>
+            <SizeHeader el={single} />
             <Row>
               <NumberField label="Width" prefix="W" min={4} max={30000} slider={{ min: 4, max: (project?.width ?? 1080) * 2 }} value={single.width} onChange={(width, c) => updateSelected(single.type === "text" ? ({ width, height: measureTextHeight({ ...single, width }) } as Partial<DesignElement>) : { width }, c)} />
               {single.type === "text" ? (
