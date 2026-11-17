@@ -7,6 +7,7 @@ import { fitToViewport, getSlideOffsets, getSurface } from "@/document/geometry"
 import { getElements, updateElements } from "@/document/operations";
 import type { DesignElement, TextElement } from "@/document/schema";
 import { collectSnapTargets, edgesForAnchor, snapMove, snapResize, unionBox, type Guide, type SnapBox, type SnapTargets } from "@/document/snapping";
+import { groupState } from "@/document/groups";
 import { playbackScope } from "@/document/timing";
 import { ensureFontsLoaded, FONT_FALLBACK, resolveItalic, resolveWeight } from "@/render/fonts";
 import type { ImageStore } from "@/render/resources";
@@ -225,28 +226,27 @@ export function CanvasStage({ images }: { images: ImageStore }) {
 
   const buildMenuItems = useCallback((): MenuItem[] => {
     const s = store();
-    const els = s.project ? getElements(s.project, s.activeSurfaceId).filter((e) => s.selection.includes(e.id)) : [];
+    const all = s.project ? getElements(s.project, s.activeSurfaceId) : [];
+    const els = all.filter((e) => s.selection.includes(e.id));
     if (els.length === 0) {
       return [{ label: "Paste", disabled: s.clipboard.length === 0, onSelect: () => store().paste() }];
     }
     const first = els[0];
     const allLocked = els.every((e) => e.locked);
-    const items: MenuItem[] = [
-      { label: "Duplicate", onSelect: () => store().duplicateSelected() },
-      { label: "Copy", onSelect: () => store().copySelected() },
-    ];
-    if (els.length === 1) {
-      if (first.type === "text" && !first.locked) items.unshift({ label: "Edit text", onSelect: () => startTextEdit(first.id) });
-      items.push(
-        { label: "Bring forward", onSelect: () => store().reorder(first.id, "forward") },
-        { label: "Send backward", onSelect: () => store().reorder(first.id, "backward") },
-        { label: "Bring to front", onSelect: () => store().reorder(first.id, "front") },
-        { label: "Send to back", onSelect: () => store().reorder(first.id, "back") },
-      );
-    }
+    const { canGroup, canUngroup } = groupState(all, s.selection);
+    const items: MenuItem[] = [];
+    if (els.length === 1 && first.type === "text" && !first.locked) items.push({ label: "Edit text", onSelect: () => startTextEdit(first.id) });
+    items.push({ label: "Duplicate", onSelect: () => store().duplicateSelected() }, { label: "Copy", onSelect: () => store().copySelected() });
+    if (canGroup) items.push({ label: "Group", onSelect: () => store().groupSelected() });
+    if (canUngroup) items.push({ label: "Ungroup", onSelect: () => store().ungroupSelected() });
+    // Every stacking action works on the whole selection, keeping its order.
     items.push(
+      { label: "Bring forward", onSelect: () => store().reorderSelected("forward") },
+      { label: "Send backward", onSelect: () => store().reorderSelected("backward") },
+      { label: "Bring to front", onSelect: () => store().reorderSelected("front") },
+      { label: "Send to back", onSelect: () => store().reorderSelected("back") },
       { label: allLocked ? "Unlock" : "Lock", onSelect: () => store().updateSelected({ locked: !allLocked }) },
-      { label: "Delete", danger: true, onSelect: () => store().deleteSelected() },
+      { label: els.length > 1 ? `Delete ${els.length} objects` : "Delete", danger: true, onSelect: () => store().deleteSelected() },
     );
     return items;
   }, [startTextEdit]);
@@ -392,8 +392,20 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       const node = elementNodeOf(e.target);
       if (!node) return s.select([]);
       const evt = e.evt as MouseEvent;
-      if (evt.shiftKey || evt.metaKey || evt.ctrlKey || s.multiSelect) s.toggleSelect(node.id());
-      else s.select([node.id()]);
+      s.selectOnCanvas(node.id(), evt.shiftKey || evt.metaKey || evt.ctrlKey || s.multiSelect);
+    });
+
+    // Pressing a grouped element that is not selected yet selects its whole group before a drag
+    // can start, so Konva drags every member together (it moves the transformer's nodes as one).
+    stage.on("mousedown touchstart", (e) => {
+      const mouse = e.evt instanceof MouseEvent ? e.evt : null;
+      if (mouse && (mouse.button !== 0 || mouse.shiftKey || mouse.metaKey || mouse.ctrlKey)) return;
+      const s = store();
+      if (s.editingTextId || s.multiSelect) return;
+      const node = elementNodeOf(e.target);
+      if (!node || s.selection.includes(node.id()) || !elementsById().get(node.id())?.groupId) return;
+      s.selectOnCanvas(node.id(), false);
+      syncTransformer();
     });
 
     stage.on("dblclick dbltap", (e) => {
@@ -411,7 +423,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       e.evt.preventDefault();
       const s = store();
       const node = elementNodeOf(e.target);
-      if (node && !s.selection.includes(node.id())) s.select([node.id()]);
+      if (node && !s.selection.includes(node.id())) s.selectOnCanvas(node.id(), false);
       if (!node && !e.target.findAncestor("Transformer", true)) s.select([]);
       setMenu({ x: e.evt.clientX, y: e.evt.clientY, items: buildMenuItems() });
     });
@@ -424,8 +436,9 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       if (snap.moving) return; // another node of the same selection joining the drag
       const s = store();
       if (!s.selection.includes(node.id())) {
-        s.select([node.id()]);
-        transformer.nodes([node]);
+        s.selectOnCanvas(node.id(), false);
+        const ids = store().selection;
+        transformer.nodes(ids.map((id) => holder.findOne(`#${id}`)).filter((n): n is Konva.Node => !!n));
       }
       // The dragged node carries the rest of the selection, so guides work on the box around all of it.
       const moving = [...new Set<Konva.Node>([node, ...transformer.nodes()])];
@@ -571,7 +584,8 @@ export function CanvasStage({ images }: { images: ImageStore }) {
             if (!node) return;
             abortManipulation();
             gesture.suppressTap = true;
-            store().select([node.id()]);
+            // Keep a multi-selection the press is part of, so the menu acts on all of it.
+            if (!store().selection.includes(node.id())) store().selectOnCanvas(node.id(), false);
             setMenu({ x: t.clientX, y: t.clientY, items: buildMenuItems() });
           }, LONG_PRESS_MS),
         };
@@ -702,7 +716,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       stage.destroy();
       refs.current = null;
     };
-  }, [applyView, buildMenuItems, fit, focusSlide, images, startTextEdit, zoomAt]);
+  }, [applyView, buildMenuItems, fit, focusSlide, images, startTextEdit, syncTransformer, zoomAt]);
 
   // --- Fonts: text can only be measured correctly once its face is loaded ----
 

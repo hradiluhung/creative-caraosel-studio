@@ -50,6 +50,11 @@ function useEditorShortcuts(enabled: boolean) {
       if (mod && key === "x") return s.selection.length > 0 ? (handled(), s.copySelected(), s.deleteSelected()) : undefined;
       if (mod && key === "v") return s.clipboard.length > 0 ? (handled(), s.paste()) : undefined;
       if (mod && key === "d") return handled(), s.duplicateSelected();
+      if (mod && key === "g") return handled(), e.shiftKey ? s.ungroupSelected() : s.groupSelected();
+      if (mod && (key === "]" || key === "[")) {
+        handled();
+        return s.reorderSelected(key === "]" ? (e.altKey ? "front" : "forward") : e.altKey ? "back" : "backward");
+      }
       if (mod && key === "a") {
         const p = s.project;
         if (!p) return;

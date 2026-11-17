@@ -131,6 +131,32 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
 - Verified: 5 new unit tests, `tests/e2e-mobile.mjs` now 36 checks (phone emulation), all other
   suites green. Tests that click into the Add panel now pick the category first.
 
+### Organising and photo journal templates (2026-11-17)
+
+- **No accidental text selection.** `body` is `user-select: none` (and no iOS long-press callout).
+  Text fields, text areas, selects, editable text, alerts and anything marked `.selectable` opt
+  back in, so editing text on the canvas and typing in fields is unchanged.
+- **Groups.** Select several objects, then Group (context menu, the properties panel, or Ctrl/Cmd+G;
+  Ctrl/Cmd+Shift+G ungroups). Clicking any member selects the whole group, so it moves, resizes
+  and rotates as one; each member keeps its own properties. The Layers panel shows a "Group (N)"
+  row and still lets you pick a single member. Duplicating a group makes a new group.
+- **Actions on several objects.** Right-click or long-press with several objects selected: Group or
+  Ungroup, Bring forward, Send backward, Bring to front, Send to back, Lock or Unlock, Duplicate,
+  Copy, Delete N objects. Stacking moves the selection as a block, so a group stays together.
+- **Delete any slide.** The delete button in the slide strip deletes the slide in focus, not the last
+  one. In seamless projects the deleted slide's strip is cut out: what sits on it is removed,
+  what sits to its right moves one slide to the left (decided by the centre of each object or
+  group). One undo step.
+- **Several projects at once.** "Select" on the Projects tab (or a long press on a phone) shows
+  check marks, "Select all shown" and "Delete N", with a confirmation listing the names.
+- **New project button on phones** is a floating button above the bottom navigation bar.
+- **Photo Journal templates** (8, `src/templates/journal.ts`): Weekend Recap, Monthly Recap,
+  The Edit, Framed Story (seamless, photos crossing the slide line), A Weekend In, Moments on
+  Film, Polaroid Diary (grouped polaroid cards) and Field Notes. Template helpers moved to
+  `src/templates/kit.ts`.
+- Verified: new unit tests for groups, template bounds and fresh group ids, `tests/e2e-organize.mjs`
+  (39 checks) and new phone checks in `tests/e2e-mobile.mjs`; all suites green.
+
 ## Known limits of Phase 5
 
 - Every automated check ran in desktop Chrome on Linux. Nothing here was verified on iOS, Safari
@@ -148,6 +174,9 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
   them.
 - Load size was measured, not runtime speed on a phone. No change was made to rendering speed.
 - "Storage is full" was simulated by making writes fail, not by filling a real disk.
+- Locked objects cannot be clicked on the canvas; unlock them from the layers list or the panel.
+- Moving one group member alone with its own layer row arrows can take it out of its group's
+  block in the stacking order. Groups do not nest: grouping a group with something else merges them.
 
 ## Progress
 

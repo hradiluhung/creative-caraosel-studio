@@ -226,6 +226,8 @@ try {
   ok("template library lists at least 10 templates", (await page.$$('section[aria-label="Templates"] article')).length >= 10);
   await page.select(L("Category"), "Travel");
   ok("category filter narrows the list", (await page.$$('section[aria-label="Templates"] article')).length === 1);
+  await page.select(L("Category"), "Photo Journal");
+  ok("the Photo Journal category has 8 templates", (await page.$$('section[aria-label="Templates"] article')).length === 8);
   await page.select(L("Category"), "");
   await click(L("Preview template Quiet Minimal"));
   await page.waitForSelector('[aria-label="Slides in this template"] img', { timeout: 30000 });

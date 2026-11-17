@@ -3,11 +3,12 @@
  * editable elements (text, shapes, stickers, photo placeholders), never a flattened image.
  * To add a template, append a TemplateDef to BUILT_IN_TEMPLATES; the library picks it up.
  */
-import { createOverlay, createPlaceholder, createProject, createShape, createSticker, createText } from "@/document/factory";
+import { createOverlay } from "@/document/factory";
 import { PANORAMA_ID } from "@/document/geometry";
-import { addElements, setBackground } from "@/document/operations";
-import type { Background, DesignElement, ImageElement, Project, ShapeElement, ShapeKind, StickerElement, TextElement } from "@/document/schema";
-import { getSticker } from "@/render/stickers";
+import { addElements } from "@/document/operations";
+import type { DesignElement, Project } from "@/document/schema";
+import { JOURNAL_TEMPLATES } from "./journal";
+import { H, independent, linear, P, photo, seamless, shadow, shape, solid, sticker, text, W, type Box } from "./kit";
 
 export interface TemplateDef {
   id: string;
@@ -16,72 +17,9 @@ export interface TemplateDef {
   build(): Project;
 }
 
-const P = { centerX: 0, centerY: 0, maxWidth: 1000, maxHeight: 1000 };
-type Box = [x: number, y: number, w: number, h: number];
-
-function text(content: string, [x, y, w]: [number, number, number], o: Partial<TextElement> & { size: number }): TextElement {
-  const { size, ...rest } = o;
-  const lineHeight = rest.lineHeight ?? 1.15;
-  const lines = content.split("\n").length;
-  return {
-    ...createText("body", P),
-    text: content,
-    name: content.replace(/\s+/g, " ").slice(0, 40),
-    x,
-    y,
-    width: w,
-    // Estimate only: the renderer always measures the real height once the font is loaded.
-    height: Math.round(lines * size * lineHeight),
-    fontSize: size,
-    fontFamily: "Inter",
-    fontWeight: 400,
-    align: "left",
-    lineHeight,
-    ...rest,
-  };
-}
-const photo = ([x, y, width, height]: Box, o: Partial<ImageElement> = {}): ImageElement => ({ ...createPlaceholder({ x, y, width, height }), ...o });
-const shape = (kind: ShapeKind, [x, y, width, height]: Box, fill: string, o: Partial<ShapeElement> = {}): ShapeElement => ({
-  ...createShape(kind, P),
-  x,
-  y,
-  width,
-  height,
-  fill,
-  stroke: fill,
-  ...o,
-});
-function sticker(id: string, [x, y, width]: [number, number, number], color: string, o: Partial<StickerElement> = {}): StickerElement {
-  const def = getSticker(id)!;
-  return { ...createSticker(id, def.name, def.width / def.height, P), x, y, width, height: Math.round((width * def.height) / def.width), color, ...o };
-}
-const solid = (color: string): Background => ({ type: "solid", color });
-const linear = (angle: number, ...colors: string[]): Background => ({ type: "linear", angle, stops: colors.map((color, i) => ({ offset: i / (colors.length - 1), color })) });
-const shadow = { color: "#000000", opacity: 0.28, blur: 30, offsetX: 0, offsetY: 14 };
-
-interface SlideSpec {
-  bg: Background;
-  els: DesignElement[];
-}
-
-function independent(name: string, width: number, height: number, slides: SlideSpec[]): Project {
-  let p = createProject({ name, width, height, slideCount: slides.length, mode: "independent" }, new Date(0));
-  slides.forEach((s, i) => {
-    const id = p.slides[i].id;
-    p = addElements(setBackground(p, id, s.bg), id, s.els);
-  });
-  return p;
-}
-
-function seamless(name: string, width: number, height: number, slideCount: number, bg: Background, els: DesignElement[]): Project {
-  const p = createProject({ name, width, height, slideCount, mode: "seamless" }, new Date(0));
-  return addElements(setBackground(p, PANORAMA_ID, bg), PANORAMA_ID, els);
-}
-
-const W = 1080;
-const H = 1350;
-
 export const BUILT_IN_TEMPLATES: TemplateDef[] = [
+  // Photo journals first: the main direction of the template library.
+  ...JOURNAL_TEMPLATES,
   {
     id: "quiet-minimal",
     name: "Quiet Minimal",

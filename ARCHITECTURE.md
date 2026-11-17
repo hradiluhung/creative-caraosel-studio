@@ -391,6 +391,16 @@ Plan, results and limits are in `PHASE5_PLAN.md`. What it added to the architect
   (`cache-scripts` message), so on-demand code is available offline after the first visit.
 - **Accessibility checks** (axe-core, WCAG 2.1 A and AA) are part of `tests/e2e-phase5.mjs`.
 
+- **Groups (schema version 7).** Every element has an optional `groupId`; the element list stays
+  flat. `src/document/groups.ts` holds the pure rules: grouping gathers members next to each other
+  at the topmost member's place, a group of one is dissolved, copies get new group ids, and
+  stacking moves whole blocks. The canvas selects a whole group on press, so the existing
+  transformer moves it as one.
+- **Slide deletion** (`removeSlide`) works for any slide. In seamless mode it cuts the slide's strip
+  out of the panorama by the centre of each object or group.
+- **Templates** are built from small helpers in `src/templates/kit.ts`; the photo journal set lives
+  in `src/templates/journal.ts`.
+
 ## 15. Known limitations (honest list)
 
 - **Video (Phase 3):** import was confirmed on an iPhone; playback smoothness there, the timeline, MP4

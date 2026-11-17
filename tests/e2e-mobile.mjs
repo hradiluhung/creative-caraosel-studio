@@ -105,7 +105,12 @@ try {
   await (await page.waitForSelector('[data-testid="mobile-nav"] button ::-p-text(Projects)')).tap();
   await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Projects");
 
-  await (await page.waitForSelector("button ::-p-text(New project)")).tap();
+  // New project is a floating button on phones, above the navigation bar.
+  const fab = await (await page.waitForSelector('[data-testid="new-project-fab"]', { visible: true })).boundingBox();
+  const nav = await (await page.$('[data-testid="mobile-nav"]')).boundingBox();
+  ok("New project is a floating button above the bottom bar, on the right", fab.y + fab.height <= nav.y && fab.x + fab.width >= 390 - 24 && fab.height >= 48, JSON.stringify(fab));
+  ok("the header has no second New project button on phones", await page.$$eval("header button", (ns) => ns.every((n) => !n.textContent.includes("New project") || n.offsetParent === null)));
+  await (await page.waitForSelector('[data-testid="new-project-fab"]')).tap();
   await page.type("#np-name", "Phone Test");
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), tapText("Create project")]);
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
@@ -312,6 +317,20 @@ try {
   await page.waitForSelector('[data-testid="export-success"]', { timeout: 60000 });
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), (await page.waitForSelector("button ::-p-text(Back to projects)")).tap()]);
   ok("'Back to projects' opens the dashboard", new URL(page.url()).pathname === "/" && !!(await page.$('[data-testid="mobile-nav"]')));
+
+  // A long press on a project starts selecting, with that project selected.
+  const card = await (await page.waitForSelector('[data-testid="project-card"] a')).boundingBox();
+  await page.touchscreen.touchStart(card.x + card.width / 2, card.y + card.height / 3);
+  await sleep(750);
+  await page.touchscreen.touchEnd();
+  await sleep(250);
+  ok(
+    "a long press on a project selects it instead of opening it",
+    new URL(page.url()).pathname === "/" && (await page.$eval('[data-testid="project-bulk-count"]', (n) => n.textContent).catch(() => "")) === "1 selected",
+  );
+  ok("while selecting, the floating button steps aside", !(await page.$('[data-testid="new-project-fab"]')));
+  await page.screenshot({ path: `${SHOTS}/m-06-select-projects.png` });
+  await (await page.waitForSelector("button ::-p-text(Done)")).tap();
 
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (e) {

@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const finite = z.number().refine(Number.isFinite, "must be finite");
 const hexColor = z.string().regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "expected #RRGGBB or #RRGGBBAA");
@@ -60,6 +60,8 @@ const baseElement = {
   locked: z.boolean(),
   blendMode: blendModeSchema,
   shadow: shadowSchema.nullable(),
+  /** Elements with the same id form a group (see groups.ts). Absent: not grouped. */
+  groupId: z.string().min(1).max(64).optional(),
 };
 
 const amount = z.number().min(-100).max(100);

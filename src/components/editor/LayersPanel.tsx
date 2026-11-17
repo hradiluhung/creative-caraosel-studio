@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Eye, EyeOff, Film, Image as ImageIcon, Layers2, Lock, Shapes, Sticker, Type, Unlock } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Film, Group, Image as ImageIcon, Layers2, Lock, Shapes, Sticker, Type, Unlock } from "lucide-react";
 import { useState } from "react";
 import { getElements, moveElementToIndex, updateElements } from "@/document/operations";
 import type { DesignElement } from "@/document/schema";
@@ -10,7 +10,7 @@ import { IconButton } from "../ui/primitives";
 
 const ICONS = { text: Type, image: ImageIcon, shape: Shapes, sticker: Sticker, overlay: Layers2, video: Film } as const;
 
-function LayerRow({ el, index, count }: { el: DesignElement; index: number; count: number }) {
+function LayerRow({ el, index, count, inGroup = false }: { el: DesignElement; index: number; count: number; inGroup?: boolean }) {
   const selected = useEditorStore((s) => s.selection.includes(el.id));
   const activeSurfaceId = useEditorStore((s) => s.activeSurfaceId);
   const [draft, setDraft] = useState<string | null>(null);
@@ -55,6 +55,7 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
       aria-current={selected ? "true" : undefined}
       className={cn(
         "group flex h-9 items-center gap-1.5 border-y border-transparent pr-1 pl-3 select-none",
+        inGroup && "ml-3 border-l border-l-line-strong pl-2.5",
         selected ? "bg-sunken" : "hover:bg-sunken/60",
         dropHint === "above" && "border-t-accent",
         dropHint === "below" && "border-b-accent",
@@ -88,10 +89,10 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
       )}
       {selected && draft === null && (
         <>
-          <IconButton label="Bring forward" className="h-6 w-6" disabled={index === count - 1} onClick={(e) => (e.stopPropagation(), s().reorder(el.id, "forward"))}>
+          <IconButton label="Bring forward" className="h-6 w-6" disabled={index === count - 1} onClick={(e) => (e.stopPropagation(), s().reorderSelected("forward"))}>
             <ChevronUp />
           </IconButton>
-          <IconButton label="Send backward" className="h-6 w-6" disabled={index === 0} onClick={(e) => (e.stopPropagation(), s().reorder(el.id, "backward"))}>
+          <IconButton label="Send backward" className="h-6 w-6" disabled={index === 0} onClick={(e) => (e.stopPropagation(), s().reorderSelected("backward"))}>
             <ChevronDown />
           </IconButton>
         </>
@@ -123,9 +124,38 @@ export function LayersPanel() {
   const rows = elements.map((el, index) => ({ el, index })).reverse();
   return (
     <ul aria-label="Layers" className="py-1">
-      {rows.map(({ el, index }) => (
-        <LayerRow key={el.id} el={el} index={index} count={elements.length} />
+      {rows.map(({ el, index }, i) => (
+        <LayerEntry key={el.id} el={el} index={index} count={elements.length} startsGroup={!!el.groupId && rows[i - 1]?.el.groupId !== el.groupId} elements={elements} />
       ))}
     </ul>
+  );
+}
+
+/** A layer, preceded by a "Group" row when it is the first (topmost) member of a group. */
+function LayerEntry({ el, index, count, startsGroup, elements }: { el: DesignElement; index: number; count: number; startsGroup: boolean; elements: DesignElement[] }) {
+  const selection = useEditorStore((s) => s.selection);
+  if (!startsGroup) return <LayerRow el={el} index={index} count={count} inGroup={!!el.groupId} />;
+  const members = elements.filter((e) => e.groupId === el.groupId).map((e) => e.id);
+  const whole = members.every((id) => selection.includes(id));
+  return (
+    <>
+      <li className="select-none">
+        <button
+          type="button"
+          data-testid="layer-group"
+          aria-pressed={whole}
+          onClick={(e) => {
+            const s = useEditorStore.getState();
+            if (e.shiftKey || e.metaKey || e.ctrlKey || s.multiSelect) s.selectOnCanvas(members[0], true);
+            else s.select(members);
+          }}
+          className={cn("flex h-8 w-full items-center gap-1.5 pr-1 pl-3 text-left text-xs font-medium", whole ? "bg-sunken" : "hover:bg-sunken/60")}
+        >
+          <Group className="h-3.5 w-3.5 shrink-0 text-muted" />
+          Group <span className="text-muted">({members.length})</span>
+        </button>
+      </li>
+      <LayerRow el={el} index={index} count={count} inGroup />
+    </>
   );
 }

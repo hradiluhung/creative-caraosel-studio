@@ -131,9 +131,10 @@ export function SlideNavigator({ thumbnails, compact = false }: { thumbnails: Re
           </>
         )}
         <IconButton
-          label={seamless ? "Remove last slide" : "Delete slide"}
+          label="Delete slide"
+          title={`Delete slide ${focusIndex + 1}`}
           disabled={project.slides.length <= 1}
-          onClick={() => s().removeSlide(seamless ? project.slides[project.slides.length - 1].id : active.id)}
+          onClick={() => s().removeSlide(project.slides[focusIndex].id)}
         >
           <Trash2 />
         </IconButton>

@@ -1,8 +1,8 @@
 "use client";
 
-import { FolderOpen, Images, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Check, FolderOpen, Images, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteProject,
   duplicateStoredProject,
@@ -49,12 +49,69 @@ function formatDate(iso: string) {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-function ProjectCard({ meta, onMenu }: { meta: ProjectMeta; onMenu: (meta: ProjectMeta, x: number, y: number) => void }) {
+const LONG_PRESS_MS = 500;
+
+function ProjectCard({
+  meta,
+  onMenu,
+  selecting,
+  selected,
+  onToggle,
+  onLongPress,
+}: {
+  meta: ProjectMeta;
+  onMenu: (meta: ProjectMeta, x: number, y: number) => void;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onLongPress: () => void;
+}) {
   const cover = useObjectUrl(meta.thumbnail);
+  // Phones: a long press starts selecting, with this project selected (the click that follows is ignored).
+  const press = useRef<{ timer: number; fired: boolean } | null>(null);
+  const cancelPress = () => {
+    if (press.current) window.clearTimeout(press.current.timer);
+  };
   return (
-    <article className="group relative">
-      <a href={`/editor?id=${encodeURIComponent(meta.id)}`} className="block">
-        <div className="flex aspect-[4/5] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-4 transition-colors group-hover:border-line-strong">
+    <article className="group relative" data-testid="project-card" data-selected={selecting ? String(selected) : undefined}>
+      <a
+        href={`/editor?id=${encodeURIComponent(meta.id)}`}
+        className="block"
+        onTouchStart={() => {
+          if (selecting) return;
+          const state = { fired: false, timer: 0 };
+          state.timer = window.setTimeout(() => {
+            state.fired = true;
+            onLongPress();
+          }, LONG_PRESS_MS);
+          press.current = state;
+        }}
+        onTouchMove={cancelPress}
+        onTouchEnd={cancelPress}
+        onContextMenu={(e) => press.current?.fired && e.preventDefault()}
+        onClick={(e) => {
+          if (press.current?.fired) {
+            press.current = null;
+            return e.preventDefault();
+          }
+          if (selecting) {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <div
+          className={cn(
+            "relative flex aspect-[4/5] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-4 transition-colors group-hover:border-line-strong",
+            selecting && selected && "border-ink ring-2 ring-ink group-hover:border-ink",
+          )}
+        >
+          {selecting && <span className="sr-only">{selected ? "Selected" : "Not selected"}</span>}
+          {selecting && (
+            <span aria-hidden className={cn("absolute top-2 right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border", selected ? "border-ink bg-ink text-bg" : "border-line-strong bg-bg/80")}>
+              {selected && <Check className="h-3.5 w-3.5" />}
+            </span>
+          )}
           {cover ? (
             // eslint-disable-next-line @next/next/no-img-element -- local blob preview, not a remote image
             <img src={cover} alt="" className="max-h-full max-w-full object-contain shadow-md" />
@@ -71,6 +128,7 @@ function ProjectCard({ meta, onMenu }: { meta: ProjectMeta; onMenu: (meta: Proje
           {formatDate(meta.updatedAt)}
         </p>
       </a>
+      {!selecting && (
       <IconButton
         label={`Actions for ${meta.name}`}
         className="absolute right-0 bottom-3.5"
@@ -81,6 +139,7 @@ function ProjectCard({ meta, onMenu }: { meta: ProjectMeta; onMenu: (meta: Proje
       >
         <MoreHorizontal />
       </IconButton>
+      )}
     </article>
   );
 }
@@ -93,6 +152,20 @@ export function Dashboard() {
   const [menu, setMenu] = useState<{ meta: ProjectMeta; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ meta: ProjectMeta; name: string } | null>(null);
   const [deleting, setDeleting] = useState<ProjectMeta | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const stopSelecting = () => {
+    setSelecting(false);
+    setPicked(new Set());
+  };
+  const togglePicked = (id: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [tab, setTab] = useState<Tab>("projects");
   // Fetch the other tabs once the page is idle: opening them is then instant, and the service
   // worker has them cached, so they also open offline.
@@ -150,7 +223,7 @@ export function Dashboard() {
           <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Creative Carousel Studio</p>
           <h1 className="mt-1 truncate font-display text-[28px] leading-none font-bold tracking-tight sm:text-[34px]">{TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
-        <Button variant="primary" className="shrink-0" onClick={() => setCreating(true)}>
+        <Button variant="primary" className={cn("shrink-0", tab === "projects" && "max-sm:hidden")} onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" /> New project
         </Button>
       </header>
@@ -180,10 +253,35 @@ export function Dashboard() {
         {tab === "brand" && <BrandKits />}
         {tab === "projects" && (
         <>
-        <div className="relative mb-6 sm:max-w-xs">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-          <TextInput aria-label="Search projects" placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
+        <div className="mb-6 flex items-center gap-2">
+          <div className="relative min-w-0 flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <TextInput aria-label="Search projects" placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
+          </div>
+          <Button
+            variant={selecting ? "primary" : "outline"}
+            aria-pressed={selecting}
+            disabled={!projects?.length}
+            onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+            className="shrink-0"
+          >
+            {selecting ? "Done" : "Select"}
+          </Button>
         </div>
+        {selecting && (
+          <div className="mb-6 flex min-h-9 flex-wrap items-center gap-2" data-testid="project-bulk-bar">
+            <Button size="sm" variant="ghost" disabled={filtered.length === 0} onClick={() => setPicked(new Set(filtered.map((p) => p.id)))}>
+              Select all shown ({filtered.length})
+            </Button>
+            <span className="text-xs text-muted" data-testid="project-bulk-count">
+              {picked.size} selected
+            </span>
+            <span className="grow" />
+            <Button size="sm" variant="danger" disabled={picked.size === 0} onClick={() => setBulkDeleting(true)}>
+              <Trash2 className="h-3.5 w-3.5" /> Delete{picked.size ? ` ${picked.size}` : ""}
+            </Button>
+          </div>
+        )}
 
         {error && (
           <p role="alert" className="mb-6 rounded-md border border-danger/40 px-3 py-2 text-xs text-danger">
@@ -208,7 +306,18 @@ export function Dashboard() {
         ) : (
           <section aria-label="Recent projects" className="grid grid-cols-2 gap-x-5 gap-y-8 pb-16 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {filtered.map((meta) => (
-              <ProjectCard key={meta.id} meta={meta} onMenu={(m, x, y) => setMenu({ meta: m, x, y })} />
+              <ProjectCard
+                key={meta.id}
+                meta={meta}
+                onMenu={(m, x, y) => setMenu({ meta: m, x, y })}
+                selecting={selecting}
+                selected={picked.has(meta.id)}
+                onToggle={() => togglePicked(meta.id)}
+                onLongPress={() => {
+                  setSelecting(true);
+                  setPicked(new Set([meta.id]));
+                }}
+              />
             ))}
           </section>
         )}
@@ -237,6 +346,62 @@ export function Dashboard() {
           ))}
         </div>
       </nav>
+
+      {/* Phones: New project as a floating button above the navigation bar. */}
+      {tab === "projects" && !selecting && (
+        <button
+          type="button"
+          data-testid="new-project-fab"
+          onClick={() => setCreating(true)}
+          className="fixed right-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 flex h-14 items-center gap-2 rounded-full bg-ink pr-5 pl-4 text-sm font-semibold text-bg shadow-lg active:scale-95 sm:hidden"
+        >
+          <Plus className="h-5 w-5" /> New project
+        </button>
+      )}
+
+      {bulkDeleting && (
+        <Dialog
+          title={`Delete ${picked.size} ${picked.size === 1 ? "project" : "projects"}?`}
+          onClose={() => setBulkDeleting(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setBulkDeleting(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                data-testid="confirm-bulk-delete-projects"
+                onClick={() => {
+                  const ids = [...picked];
+                  setBulkDeleting(false);
+                  stopSelecting();
+                  void run(async () => {
+                    // One by one: each delete also frees the images only that project used.
+                    for (const id of ids) await deleteProject(id);
+                  });
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete {picked.size}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-2" data-testid="bulk-delete-projects">
+            <p>These projects, and the images only they use, will be removed from this device. This cannot be undone.</p>
+            <ul className="list-disc space-y-0.5 pl-5 text-xs">
+              {(projects ?? [])
+                .filter((p) => picked.has(p.id))
+                .slice(0, 6)
+                .map((p) => (
+                  <li key={p.id} className="truncate">
+                    {p.name}
+                  </li>
+                ))}
+            </ul>
+            {picked.size > 6 && <p className="text-xs text-muted">and {picked.size - 6} more</p>}
+          </div>
+        </Dialog>
+      )}
 
       {creating && <NewProjectDialog onClose={() => setCreating(false)} />}
 

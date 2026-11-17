@@ -16,6 +16,10 @@ import {
   ImagePlus,
   Italic,
   Lock,
+  ArrowDownToLine,
+  ArrowUpToLine,
+  Group,
+  Ungroup,
   RotateCcw,
   RotateCw,
   Trash2,
@@ -54,6 +58,7 @@ import { PREF, setPref, usePref } from "@/lib/prefs";
 import { Button, IconButton, Label, NumberField, Segmented, Select, Slider, TextInput } from "../ui/primitives";
 import { alignSelected, makePlaceholders, originalSizeOf, replaceImage, resetSize, type AlignEdge } from "./actions";
 import { hasOriginalSize } from "@/document/sizing";
+import { groupState } from "@/document/groups";
 import { ColorControl } from "./ColorControl";
 import { FontPicker, useFontCatalog } from "./FontPicker";
 import { BackgroundControls, Section } from "./InsertPanel";
@@ -639,6 +644,7 @@ export function PropertiesPanel() {
 
   const single = selected.length === 1 ? selected[0] : null;
   const allLocked = selected.every((e) => e.locked);
+  const groups = groupState(getSurface(project, activeSurfaceId)?.elements ?? [], selected.map((e) => e.id));
   const opacity = selected[0].opacity;
 
   return (
@@ -684,6 +690,23 @@ export function PropertiesPanel() {
           <IconButton label="Delete" onClick={deleteSelected}>
             <Trash2 />
           </IconButton>
+          <span className="mx-1 h-5 w-px bg-line" aria-hidden />
+          <IconButton label="Bring forward" onClick={() => useEditorStore.getState().reorderSelected("forward")}>
+            <ArrowUpToLine />
+          </IconButton>
+          <IconButton label="Send backward" onClick={() => useEditorStore.getState().reorderSelected("backward")}>
+            <ArrowDownToLine />
+          </IconButton>
+          {groups.canGroup && (
+            <IconButton label="Group" onClick={() => useEditorStore.getState().groupSelected()}>
+              <Group />
+            </IconButton>
+          )}
+          {groups.canUngroup && (
+            <IconButton label="Ungroup" onClick={() => useEditorStore.getState().ungroupSelected()}>
+              <Ungroup />
+            </IconButton>
+          )}
         </div>
       </Section>
       {single?.type === "text" && <TextProps key={single.id} el={single} />}

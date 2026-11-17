@@ -3,8 +3,9 @@
  * these, which keeps undo/redo (snapshot based) and tests simple.
  */
 import { createId } from "./ids";
+import { groupElements, normalizeGroups, remapGroups, reorderMany, ungroupElements } from "./groups";
 import { createSlide } from "./factory";
-import { PANORAMA_ID } from "./geometry";
+import { PANORAMA_ID, rotatedBounds } from "./geometry";
 import { MAX_VIDEO_SLIDE_SECONDS, splitClip } from "./timing";
 import { MAX_SLIDES, type AssetRef, type AudioTrack, type Background, type DesignElement, type Project, type Slide } from "./schema";
 
@@ -60,13 +61,34 @@ export function removeElements(project: Project, surfaceId: string, ids: string[
   const set = new Set(ids);
   return mapContainer(project, surfaceId, (c) => {
     const elements = c.elements.filter((el) => !set.has(el.id));
-    return elements.length === c.elements.length ? c : { ...c, elements };
+    return elements.length === c.elements.length ? c : { ...c, elements: normalizeGroups(elements) };
   });
 }
 
-/** Clone elements with fresh ids. Used by duplicate and paste. */
+/** Clone elements with fresh ids (and fresh group ids, so copied groups are new groups). Used by duplicate and paste. */
 export function cloneElements(elements: DesignElement[], offset = 0): DesignElement[] {
-  return elements.map((el) => ({ ...el, id: createId(), x: el.x + offset, y: el.y + offset }));
+  return remapGroups(elements.map((el) => ({ ...el, id: createId(), x: el.x + offset, y: el.y + offset })));
+}
+
+export function groupOnSurface(project: Project, surfaceId: string, ids: string[]): Project {
+  return mapContainer(project, surfaceId, (c) => {
+    const elements = groupElements(c.elements, ids);
+    return elements === c.elements ? c : { ...c, elements };
+  });
+}
+
+export function ungroupOnSurface(project: Project, surfaceId: string, ids: string[]): Project {
+  return mapContainer(project, surfaceId, (c) => {
+    const elements = ungroupElements(c.elements, ids);
+    return elements === c.elements ? c : { ...c, elements };
+  });
+}
+
+export function reorderOnSurface(project: Project, surfaceId: string, ids: string[], direction: ReorderDirection): Project {
+  return mapContainer(project, surfaceId, (c) => {
+    const elements = reorderMany(c.elements, ids, direction);
+    return elements === c.elements ? c : { ...c, elements };
+  });
 }
 
 export function duplicateElements(project: Project, surfaceId: string, ids: string[], offset = 24) {
@@ -154,10 +176,35 @@ export function addSlide(project: Project, atIndex = project.slides.length): { p
   return { project: { ...project, slides }, slide };
 }
 
+/**
+ * Delete one slide, wherever it is. In a seamless panorama the content is one wide canvas, so the
+ * slide's strip is cut out: what sits on it goes, what sits to its right moves one slide width to
+ * the left, what sits to its left stays. "Sits on" is decided by the centre of each element, or of
+ * the whole group, so a group is kept, moved or removed as one.
+ */
 export function removeSlide(project: Project, slideId: string): Project {
   if (project.slides.length <= 1) return project;
+  const index = project.slides.findIndex((s) => s.id === slideId);
+  if (index < 0) return project;
   const slides = project.slides.filter((s) => s.id !== slideId);
-  return slides.length === project.slides.length ? project : { ...project, slides };
+  if (project.mode !== "seamless") return { ...project, slides };
+
+  const start = index * project.width;
+  const end = start + project.width;
+  const units = new Map<string, { left: number; right: number }>();
+  for (const el of project.panorama.elements) {
+    const b = rotatedBounds(el);
+    const key = el.groupId ?? el.id;
+    const u = units.get(key);
+    units.set(key, u ? { left: Math.min(u.left, b.x), right: Math.max(u.right, b.x + b.width) } : { left: b.x, right: b.x + b.width });
+  }
+  const elements = project.panorama.elements.flatMap((el) => {
+    const u = units.get(el.groupId ?? el.id)!;
+    const centre = (u.left + u.right) / 2;
+    if (centre >= start && centre < end) return [];
+    return centre >= end ? [{ ...el, x: el.x - project.width }] : [el];
+  });
+  return { ...project, slides, panorama: { ...project.panorama, elements } };
 }
 
 export function duplicateSlide(project: Project, slideId: string): { project: Project; slide: Slide | null } {

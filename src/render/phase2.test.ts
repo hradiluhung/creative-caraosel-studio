@@ -179,7 +179,7 @@ describe("templates", () => {
   });
 
   it("using a template gives a new project with fresh ids and the same content", () => {
-    const t = templates[0];
+    const t = templates.find((x) => x.doc.mode === "independent" && x.doc.slides[0].elements.length > 0)!;
     const a = instantiateTemplate(t, "Mine");
     const b = instantiateTemplate(t, "Other");
     expect(a.name).toBe("Mine");
@@ -188,6 +188,34 @@ describe("templates", () => {
     expect(a.slides[0].elements[0].id).not.toBe(b.slides[0].elements[0].id);
     expect(a.slides.map((s) => s.elements.length)).toEqual(t.doc.slides.map((s) => s.elements.length));
     expect(projectSchema.safeParse(a).success).toBe(true);
+  });
+
+  it("grouped template parts get fresh group ids in every new project", () => {
+    const t = templates.find((x) => x.id === "journal-polaroid-diary")!;
+    const groupsOf = (p: typeof t.doc) => new Set(p.slides.flatMap((s) => s.elements).map((e) => e.groupId).filter(Boolean));
+    const original = groupsOf(t.doc);
+    const copy = groupsOf(instantiateTemplate(t, "Mine"));
+    expect(original.size).toBeGreaterThan(0);
+    expect(copy.size).toBe(original.size);
+    for (const g of copy) expect(original.has(g)).toBe(false);
+  });
+
+  it("every template keeps its content on the page", () => {
+    for (const t of templates) {
+      const surfaces = t.doc.mode === "seamless"
+        ? [{ elements: t.doc.panorama.elements, width: t.doc.width * t.doc.slides.length }]
+        : t.doc.slides.map((s) => ({ elements: s.elements, width: t.doc.width }));
+      for (const surface of surfaces) {
+        for (const e of surface.elements) {
+          if (e.type === "text") {
+            expect(e.x, `${t.id} ${e.name}`).toBeGreaterThanOrEqual(0);
+            expect(e.x + e.width, `${t.id} ${e.name}`).toBeLessThanOrEqual(surface.width);
+            expect(e.y, `${t.id} ${e.name}`).toBeGreaterThanOrEqual(0);
+            expect(e.y + e.height, `${t.id} ${e.name}`).toBeLessThanOrEqual(t.doc.height);
+          }
+        }
+      }
+    }
   });
 
   it("seamless templates really cross slide boundaries", () => {

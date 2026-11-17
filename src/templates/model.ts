@@ -7,6 +7,7 @@ export const MY_TEMPLATES = "My templates";
 /** Categories a user template can be filed under (SPEC 11). Built-in templates use the same names. */
 export const TEMPLATE_CATEGORIES = [
   MY_TEMPLATES,
+  "Photo Journal",
   "Aesthetic",
   "Minimal",
   "Editorial",

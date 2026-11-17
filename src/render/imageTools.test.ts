@@ -114,7 +114,7 @@ describe("schema version 6", () => {
   const withImage = ops.addElements(ops.addAssetRef(base, ref), base.slides[0].id, [img]);
 
   it("accepts images with and without the new fields", () => {
-    expect(SCHEMA_VERSION).toBe(6);
+    expect(SCHEMA_VERSION).toBe(7);
     expect(projectSchema.safeParse(withImage).success).toBe(true);
     const styled = ops.updateElements(withImage, base.slides[0].id, [img.id], {
       crop: { x: 0.25, y: -1, zoom: 2.5, turns: 3 },
@@ -137,7 +137,7 @@ describe("schema version 6", () => {
   it("opens a version 5 document unchanged apart from the version", () => {
     const v5 = { ...JSON.parse(JSON.stringify(withImage)), schemaVersion: 5 };
     const opened = parseProject(v5);
-    expect(opened.schemaVersion).toBe(6);
+    expect(opened.schemaVersion).toBe(SCHEMA_VERSION);
     expect(opened.slides[0].elements[0]).toEqual(JSON.parse(JSON.stringify(img)));
   });
 });

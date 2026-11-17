@@ -7,6 +7,7 @@ import { create } from "zustand";
 import { getSurface, getSurfaces, PANORAMA_ID } from "@/document/geometry";
 import * as ops from "@/document/operations";
 import type { DesignElement, Project } from "@/document/schema";
+import { groupMembers } from "@/document/groups";
 import type { BrandKit } from "@/persistence/db";
 
 export type SaveStatus = "saved" | "dirty" | "saving" | "error";
@@ -56,6 +57,11 @@ export interface EditorState {
 
   select(ids: string[]): void;
   toggleSelect(id: string): void;
+  /**
+   * Selection from the canvas: an element in a group brings its whole group. With `additive`
+   * (Shift, Cmd, Ctrl or the touch multi-select toggle) the element or group is added or removed.
+   */
+  selectOnCanvas(id: string, additive: boolean): void;
   /** Touch screens have no Shift key: while this is on, a tap adds or removes an object from the selection. */
   multiSelect: boolean;
   setMultiSelect(on: boolean): void;
@@ -73,6 +79,10 @@ export interface EditorState {
   copySelected(): void;
   paste(): void;
   reorder(id: string, direction: ops.ReorderDirection): void;
+  /** Move every selected element up or down the stacking order (one undo step). */
+  reorderSelected(direction: ops.ReorderDirection): void;
+  groupSelected(): void;
+  ungroupSelected(): void;
   nudgeSelected(dx: number, dy: number): void;
 
   addSlide(): void;
@@ -202,6 +212,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setMultiSelect(on) {
     set({ multiSelect: on });
   },
+  selectOnCanvas(id, additive) {
+    const s = get();
+    if (!s.project) return;
+    const members = groupMembers(ops.getElements(s.project, s.activeSurfaceId), id);
+    if (members.length === 0) return;
+    if (!additive) return s.select(members);
+    const has = s.selection.includes(id);
+    set({ selection: has ? s.selection.filter((x) => !members.includes(x)) : [...s.selection, ...members.filter((x) => !s.selection.includes(x))] });
+  },
   toggleSelect(id) {
     const cur = get().selection;
     set({ selection: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
@@ -278,6 +297,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   reorder(id, direction) {
     const { activeSurfaceId, commit } = get();
     commit((p) => ops.reorderElement(p, activeSurfaceId, id, direction));
+  },
+  reorderSelected(direction) {
+    const { activeSurfaceId, selection, commit } = get();
+    if (selection.length === 0) return;
+    commit((p) => ops.reorderOnSurface(p, activeSurfaceId, selection, direction));
+  },
+  groupSelected() {
+    const { activeSurfaceId, selection, commit } = get();
+    if (selection.length < 2) return;
+    commit((p) => ops.groupOnSurface(p, activeSurfaceId, selection));
+  },
+  ungroupSelected() {
+    const { activeSurfaceId, selection, commit } = get();
+    if (selection.length === 0) return;
+    commit((p) => ops.ungroupOnSurface(p, activeSurfaceId, selection));
   },
   nudgeSelected(dx, dy) {
     const { activeSurfaceId, selection, commit } = get();

@@ -66,6 +66,8 @@ const MIGRATIONS: Record<number, Migration> = {
   4: (doc) => ({ ...doc, schemaVersion: 5 }),
   // Version 6 (Phase 4, image tools): optional crop, duotone and overlay on image elements.
   5: (doc) => ({ ...doc, schemaVersion: 6 }),
+  // Version 7 (grouping): optional groupId on every element.
+  6: (doc) => ({ ...doc, schemaVersion: 7 }),
 };
 
 export class DocumentError extends Error {
