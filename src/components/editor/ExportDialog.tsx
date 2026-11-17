@@ -21,8 +21,20 @@ import { Button, Dialog, Label, Segmented, Slider } from "../ui/primitives";
 type Phase =
   | { kind: "idle" }
   | { kind: "running"; done: number; total: number; detail?: string }
-  | { kind: "done"; files: ExportedFile[]; zip: Blob | null }
+  | { kind: "done"; files: ExportedFile[]; zip: Blob | null; viaShare: boolean }
   | { kind: "error"; message: string };
+
+/** Files the share sheet accepts, or null when this browser cannot share them. */
+function shareable(files: ExportedFile[]): File[] | null {
+  try {
+    const list = files.map((f) => new File([f.blob], f.name, { type: f.blob.type }));
+    return typeof navigator.canShare === "function" && navigator.canShare({ files: list }) ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+const isTouchScreen = () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true;
 
 export function ExportDialog({ images, onClose }: { images: ImageStore; onClose: () => void }) {
   const project = useEditorStore((s) => s.project);
@@ -89,24 +101,21 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
         onProgress: (done, total, detail) => setPhase({ kind: "running", done, total, detail }),
       });
       const zip = files.length > 1 ? await packageZip(files, controller.signal) : null;
-      setPhase({ kind: "done", files, zip });
-      deliver(files, zip);
+      // Phones and tablets that can share files (iPhone, iPad, Android): offer the share sheet,
+      // which saves straight to Photos or Files. It needs a fresh tap, so it is a button rather
+      // than opening by itself. Everywhere else the download starts at once, as before.
+      const viaShare = isTouchScreen() && shareable(files) !== null;
+      setPhase({ kind: "done", files, zip, viaShare });
+      if (!viaShare) deliver(files, zip);
     } catch (e) {
       if (e instanceof ExportCancelled) setPhase({ kind: "idle" });
       else setPhase({ kind: "error", message: e instanceof Error ? e.message : "Export failed." });
     }
   };
 
-  /** iOS: the share sheet is the way to put images straight into Photos. */
-  const shareable = (files: ExportedFile[]) => {
-    try {
-      const list = files.map((f) => new File([f.blob], f.name, { type: f.blob.type }));
-      return typeof navigator.canShare === "function" && navigator.canShare({ files: list }) ? list : null;
-    } catch {
-      return null;
-    }
-  };
 
+  // Touch screens get the files one by one through the share sheet (with a ZIP as the option).
+  const packaging = isTouchScreen() ? "" : "One ZIP with";
   const running = phase.kind === "running";
   const info = FORMAT_INFO[format];
 
@@ -122,20 +131,41 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
           <Button onClick={() => abortRef.current?.abort()}>Cancel export</Button>
         ) : phase.kind === "done" ? (
           <>
-            {shareable(phase.files) && (
-              <Button
-                onClick={() => {
-                  const files = shareable(phase.files);
-                  if (files) void navigator.share({ files }).catch(() => undefined);
-                }}
-              >
-                Share / Save to Photos
-              </Button>
+            {phase.viaShare ? (
+              <>
+                <Button variant="ghost" onClick={() => deliver(phase.files, phase.zip)}>
+                  {phase.zip ? "Download ZIP" : "Download"}
+                </Button>
+                <Button
+                  variant="primary"
+                  data-testid="share-export"
+                  onClick={() => {
+                    const files = shareable(phase.files);
+                    // Cancelling the share sheet rejects too; that is not an error.
+                    if (files) void navigator.share({ files }).catch(() => undefined);
+                  }}
+                >
+                  Save to Photos or Files
+                </Button>
+              </>
+            ) : (
+              <>
+                {shareable(phase.files) && (
+                  <Button
+                    onClick={() => {
+                      const files = shareable(phase.files);
+                      if (files) void navigator.share({ files }).catch(() => undefined);
+                    }}
+                  >
+                    Share
+                  </Button>
+                )}
+                <Button onClick={() => deliver(phase.files, phase.zip)}>Download again</Button>
+                <Button variant="primary" onClick={onClose}>
+                  Done
+                </Button>
+              </>
             )}
-            <Button onClick={() => deliver(phase.files, phase.zip)}>Download again</Button>
-            <Button variant="primary" onClick={onClose}>
-              Done
-            </Button>
           </>
         ) : (
           <>
@@ -278,8 +308,8 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
             <p className="text-xs text-muted">
               {indices.length > 1
                 ? asVideo
-                  ? `One ZIP with ${indices.length} numbered files in slide order: ${stillSlides} ${info.label} and ${videoSlides.length} video.`
-                  : `One ZIP with ${indices.length} numbered ${info.label} files, in slide order.`
+                  ? `${packaging ? `${packaging} ` : ""}${indices.length} numbered files in slide order: ${stillSlides} ${info.label} and ${videoSlides.length} video.`
+                  : `${packaging ? `${packaging} ` : ""}${indices.length} numbered ${info.label} files, in slide order.`
                 : asVideo
                   ? "One video file."
                   : `One ${info.label} file.`}
@@ -306,8 +336,10 @@ export function ExportDialog({ images, onClose }: { images: ImageStore; onClose:
         {phase.kind === "done" && (
           <p role="status" data-testid="export-done" className="rounded-md border border-line bg-sunken px-3 py-2 text-xs">
             Exported {phase.files.length} {phase.files.length === 1 ? "file" : "files"}
-            {phase.files.every((f) => f.kind === "image") ? ` at ${phase.files[0].width} × ${phase.files[0].height} px` : `: ${phase.files.map((f) => f.name.split(".").pop()).join(", ")}`}. The download
-            has started.
+            {phase.files.every((f) => f.kind === "image") ? ` at ${phase.files[0].width} × ${phase.files[0].height} px` : `: ${phase.files.map((f) => f.name.split(".").pop()).join(", ")}`}.
+            {phase.viaShare
+              ? " Tap “Save to Photos or Files”, then choose whether to save to Photos or to Files."
+              : " The download has started."}
             {phase.files.some((f) => f.kind === "video" && !f.hasAudio) && " The video has no sound."}
           </p>
         )}

@@ -74,6 +74,21 @@ const slide = (label, values) =>
     values,
   );
 
+// Headless Chrome has no share sheet: stand in for it and record what would be shared, and count
+// downloads the page starts by itself (anchors with a download attribute).
+await page.evaluateOnNewDocument(() => {
+  window.__autoDownloads = 0;
+  navigator.canShare = (data) => Array.isArray(data?.files) && data.files.length > 0;
+  navigator.share = async (data) => {
+    window.__shared = data.files.map((f) => ({ name: f.name, type: f.type, size: f.size }));
+  };
+  const click = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () {
+    if (this.download) window.__autoDownloads += 1;
+    else click.call(this);
+  };
+});
+
 try {
   await page.goto(BASE, { waitUntil: "networkidle0" });
 
@@ -96,7 +111,17 @@ try {
   await page.waitForSelector('[data-testid="canvas-host"] canvas');
   await sleep(600);
 
-  ok("the status bar backing is in the editor and takes no space where there is no status bar", await page.$eval('[data-testid="status-bar-backing"]', (n) => getComputedStyle(n).position === "fixed" && n.getBoundingClientRect().height === 0));
+  const bar = await page.$eval('[data-testid="editor-top-bar"]', (n) => {
+    const r = n.getBoundingClientRect();
+    const st = getComputedStyle(n);
+    return { position: st.position, top: r.top, height: r.height, width: r.width / window.innerWidth, bg: st.backgroundColor };
+  });
+  // What recent iOS needs to fill the status bar with a solid colour instead of blurring.
+  ok(
+    "the editor top bar is stuck to the top, solid, tall and full width",
+    bar.position === "sticky" && bar.top <= 4 && bar.height >= 6 && bar.width >= 0.8 && /^rgb\(/.test(bar.bg),
+    JSON.stringify(bar),
+  );
 
   // ---------- Add panel categories ----------
   await tool("Add");
@@ -235,6 +260,23 @@ try {
   await saved();
   reset = (await els())[1];
   ok("Reset size is one undo step", reset.width === 500 && reset.height === sized.height);
+
+  // ---------- Export on a phone: share sheet instead of a ZIP ----------
+  await (await page.waitForSelector("button ::-p-text(Export)")).tap();
+  await (await page.waitForSelector("button ::-p-text(Export 5 slides)")).tap();
+  await page.waitForSelector('[data-testid="export-done"]', { timeout: 60000 });
+  const doneText = await page.$eval('[data-testid="export-done"]', (n) => n.textContent);
+  ok("on a phone the export waits for the share sheet instead of downloading a ZIP", doneText.includes("Save to Photos or Files") && !doneText.includes("download has started") && (await page.evaluate(() => window.__autoDownloads)) === 0, doneText);
+  await (await page.waitForSelector('[data-testid="share-export"]')).tap();
+  await page.waitForFunction(() => window.__shared);
+  const shared = await page.evaluate(() => window.__shared);
+  ok("the share sheet gets every slide as its own image file", shared.length === 5 && shared.every((f) => f.type === "image/jpeg" && /\.jpg$/.test(f.name) && f.size > 1000), JSON.stringify(shared));
+  ok("a ZIP is still one tap away", !!(await page.$("button ::-p-text(Download ZIP)")));
+  await page.screenshot({ path: `${SHOTS}/m-05-export.png` });
+  await (await page.waitForSelector("button ::-p-text(Download ZIP)")).tap();
+  ok("and that tap downloads it", await page.waitForFunction(() => window.__autoDownloads === 1).then(() => true, () => false));
+  await page.keyboard.press("Escape");
+  await sleep(300);
 
   // Desktop pointer: the sliders stay hidden, the panel looks as before.
   const editorUrl = page.url();
