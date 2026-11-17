@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "./fonts.css";
 
+/* Touch screens (phones, tablets): controls get room for fingers and sliders instead of typing. */
+@custom-variant touch (@media (pointer: coarse));
+
 :root {
   --bg: #fafaf9;
   --panel: #ffffff;

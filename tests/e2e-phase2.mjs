@@ -169,8 +169,11 @@ try {
   await saved();
 
   // ---------- Stickers, overlays, text effects ----------
+  await page.click('[data-category="stickers"]');
   await click(L("Add sticker Sparkle"));
+  await page.click('[data-category="overlays"]');
   await click(L("Add overlay Film grain"));
+  await page.click('[data-category="text"]');
   await clickText("Add a heading");
   await click('[aria-label="Letter case"] [aria-label="Uppercase"]');
   await clickText("Outline", "label");
@@ -244,6 +247,7 @@ try {
 
   // attach the brand kit
   await page.keyboard.press("Escape");
+  await page.click('[data-category="brand"]');
   await page.select(L("Brand kit"), await page.$eval(`${L("Brand kit")} option:nth-child(2)`, (o) => o.value));
   await clickText("Brand heading");
   await saved();

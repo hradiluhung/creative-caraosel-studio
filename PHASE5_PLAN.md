@@ -109,6 +109,28 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
 - Verified: `tests/e2e-mobile.mjs` (21 checks, phone emulation in Chrome), recovery suite 5 runs in
   a row at 35/35, all other suites unchanged.
 
+### UI and UX round 2 (2026-11-17)
+
+- **Reset size.** "Size · Reset size" above width and height. Goes back to the size the object
+  gets when it is added (`src/document/sizing.ts` uses the factory functions, so the two cannot
+  disagree): photos and videos at their own proportions (turned with a quarter-turned photo),
+  shapes, stickers and overlays at their default size, text at its default width with the height
+  following the content. Keeps centre, rotation, crop and style; one undo step; disabled when the
+  size already is the original one, and not shown for an empty photo frame.
+- **Touch-screen controls in one pattern.** Every slider (number fields with sliders, opacity,
+  photo adjustments, crop, colour effects) is "label ... value" over a full-width slider, one per
+  line. A Tailwind variant `touch:` (`@media (pointer: coarse)`, in `globals.css`) holds all of
+  it, so the panel with a mouse is unchanged.
+- **Add panel by category.** Text, Shapes, Images, Videos, Layouts, Stickers, Overlays, Brand at
+  the top; only the chosen category's items below; the last category is remembered for the visit.
+  Same panel on desktop and phone. The Background section left this panel: it was a duplicate of
+  the background controls in the properties panel (nothing selected) and the phone's Canvas tool.
+- **Dashboard on phones.** A bottom navigation bar (Projects, Templates, Assets, Brand kits) with
+  icons replaces the tab row below 640 px wide, the header is more compact and search uses the
+  full width. Wider screens are unchanged.
+- Verified: 5 new unit tests, `tests/e2e-mobile.mjs` now 36 checks (phone emulation), all other
+  suites green. Tests that click into the Add panel now pick the category first.
+
 ## Known limits of Phase 5
 
 - Every automated check ran in desktop Chrome on Linux. Nothing here was verified on iOS, Safari

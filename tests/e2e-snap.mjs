@@ -99,6 +99,7 @@ try {
   const px = (screenPx) => screenPx / scale; // screen pixels as document units
 
   // ---------- Moving ----------
+  await page.click('[data-category="shapes"]');
   await click(L("Add rectangle"));
   await until(async () => ({ done: (await elementCount()) === 1 }));
   await saved();
@@ -128,6 +129,7 @@ try {
   ok("move: nothing snaps when no line is near", away === "" && a.x !== 0 && a.x + a.width / 2 !== W / 2, `${away} ${a.x}`);
 
   // A second object, moved next to the first.
+  await page.click('[data-category="shapes"]');
   await click(L("Add rectangle"));
   await until(async () => ({ done: (await elementCount()) === 2 }));
   await saved();

@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FolderOpen, Images, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -26,6 +26,13 @@ const BrandKits = dynamic(() => import("./BrandKits").then((m) => m.BrandKits), 
 const TemplateLibrary = dynamic(() => import("./TemplateLibrary").then((m) => m.TemplateLibrary), { ssr: false, loading: TabLoading });
 
 type Tab = "projects" | "templates" | "assets" | "brand";
+const TAB_ICONS: Record<Tab, React.ReactNode> = {
+  projects: <FolderOpen />,
+  templates: <LayoutTemplate />,
+  assets: <Images />,
+  brand: <Palette />,
+};
+
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "projects", label: "Projects" },
   { id: "templates", label: "Templates" },
@@ -138,18 +145,19 @@ export function Dashboard() {
 
   return (
     <div className="pt-safe px-safe min-h-full">
-      <header className="mx-auto flex max-w-6xl items-end justify-between gap-4 px-5 pt-10 pb-6 sm:px-8">
-        <div>
+      <header className="mx-auto flex max-w-6xl items-end justify-between gap-4 px-5 pt-6 pb-4 sm:px-8 sm:pt-10 sm:pb-6">
+        <div className="min-w-0">
           <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Creative Carousel Studio</p>
-          <h1 className="mt-1 font-display text-[34px] leading-none font-bold tracking-tight">{TABS.find((t) => t.id === tab)?.label}</h1>
+          <h1 className="mt-1 truncate font-display text-[28px] leading-none font-bold tracking-tight sm:text-[34px]">{TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
-        <Button variant="primary" onClick={() => setCreating(true)}>
+        <Button variant="primary" className="shrink-0" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" /> New project
         </Button>
       </header>
 
       <main className="pb-safe mx-auto max-w-6xl px-5 sm:px-8">
-        <nav aria-label="Sections" className="mb-6 flex gap-5 border-b border-line">
+        {/* Wider screens: tabs under the title. Phones use the bar at the bottom instead. */}
+        <nav aria-label="Sections" className="mb-6 hidden gap-5 border-b border-line sm:flex">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -172,7 +180,7 @@ export function Dashboard() {
         {tab === "brand" && <BrandKits />}
         {tab === "projects" && (
         <>
-        <div className="relative mb-6 max-w-xs">
+        <div className="relative mb-6 sm:max-w-xs">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
           <TextInput aria-label="Search projects" placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
         </div>
@@ -206,7 +214,29 @@ export function Dashboard() {
         )}
         </>
         )}
+        {/* Room for the phone navigation bar, so the last row is not hidden behind it. */}
+        <div aria-hidden className="h-20 sm:hidden" />
       </main>
+
+      <nav aria-label="Sections" data-testid="mobile-nav" className="pb-safe px-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-panel sm:hidden">
+        <div className="grid grid-cols-4">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              aria-current={tab === t.id ? "page" : undefined}
+              onClick={() => {
+                setTab(t.id);
+                window.scrollTo({ top: 0 });
+              }}
+              className={cn("flex h-14 flex-col items-center justify-center gap-1 text-[11px] font-medium [&_svg]:h-5 [&_svg]:w-5", tab === t.id ? "text-ink" : "text-muted")}
+            >
+              {TAB_ICONS[t.id]}
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </nav>
 
       {creating && <NewProjectDialog onClose={() => setCreating(false)} />}
 

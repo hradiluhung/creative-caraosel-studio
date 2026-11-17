@@ -1,5 +1,6 @@
 /**
- * Phone editing: selecting several objects by tapping, and sliders under number fields on touch screens.
+ * Phone layout: the dashboard's bottom navigation, the Add panel's categories, selecting several
+ * objects by tapping, sliders under number fields, and resetting an object's size.
  * Same setup as tests/e2e.mjs (production build on BASE_URL, CHROME_PATH).
  */
 import fs from "node:fs";
@@ -75,6 +76,20 @@ const slide = (label, values) =>
 
 try {
   await page.goto(BASE, { waitUntil: "networkidle0" });
+
+  // ---------- Dashboard on a phone ----------
+  const shown = (sel) => page.$eval(sel, (n) => n.offsetParent !== null || getComputedStyle(n).position === "fixed");
+  ok("the dashboard uses a bottom navigation bar on a phone", await shown('[data-testid="mobile-nav"]') && !(await page.$eval('nav[aria-label="Sections"]:not([data-testid])', (n) => n.offsetParent !== null)));
+  const navBox = await (await page.$('[data-testid="mobile-nav"]')).boundingBox();
+  ok("the bar sits at the bottom of the screen", Math.abs(navBox.y + navBox.height - 844) <= 1, JSON.stringify(navBox));
+  await (await page.waitForSelector('[data-testid="mobile-nav"] button ::-p-text(Templates)')).tap();
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Templates");
+  ok("its buttons switch sections", (await page.$eval('[data-testid="mobile-nav"] [aria-current="page"]', (n) => n.textContent)) === "Templates");
+  ok("nothing is wider than the screen", await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: `${SHOTS}/m-00-dashboard.png` });
+  await (await page.waitForSelector('[data-testid="mobile-nav"] button ::-p-text(Projects)')).tap();
+  await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Projects");
+
   await (await page.waitForSelector("button ::-p-text(New project)")).tap();
   await page.type("#np-name", "Phone Test");
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle0" }), tapText("Create project")]);
@@ -83,9 +98,28 @@ try {
 
   ok("the status bar backing is in the editor and takes no space where there is no status bar", await page.$eval('[data-testid="status-bar-backing"]', (n) => getComputedStyle(n).position === "fixed" && n.getBoundingClientRect().height === 0));
 
+  // ---------- Add panel categories ----------
+  await tool("Add");
+  await page.waitForSelector('[role="group"][aria-label="What to add"]');
+  const panes = () => page.$$eval("[data-pane]", (ns) => ns.filter((n) => !n.hidden).map((n) => n.dataset.pane));
+  const cats = await page.$$eval("[data-category]", (ns) => ns.map((n) => n.textContent));
+  ok("Add opens on categories: Text, Shapes, Images, Videos, Layouts, Stickers, Overlays, Brand", cats.join() === "Text,Shapes,Images,Videos,Layouts,Stickers,Overlays,Brand", cats.join());
+  ok("only one category's items are shown, Text first", (await panes()).join() === "text");
+  await (await page.waitForSelector('[data-category="shapes"]')).tap();
+  ok("choosing Shapes shows only the shapes", (await panes()).join() === "shapes" && (await page.$eval(L("Add rectangle"), (n) => n.offsetParent !== null)));
+  await page.screenshot({ path: `${SHOTS}/m-03-add-shapes.png` });
+  await tapText("Done");
+  await sleep(200);
+  await tool("Add");
+  await page.waitForSelector("[data-pane]");
+  ok("reopening Add returns to the category used last", (await panes()).join() === "shapes");
+  await tapText("Done");
+  await sleep(200);
+
   // Two shapes, apart from each other.
   for (const [x, y] of [[100, 150], [600, 900]]) {
     await tool("Add");
+    await (await page.waitForSelector('[data-category="shapes"]')).tap();
     await (await page.waitForSelector(L("Add rectangle"))).tap();
     await saved();
     await tapText("Done");
@@ -179,6 +213,29 @@ try {
   await saved();
   ok("the rotation slider sets the angle", (await els())[1].rotation === 45);
 
+  // On touch screens every slider field is one line wide: label and value above, slider below.
+  const blocks = await page.$$eval("[data-slider]", (ns) => ns.filter((n) => n.offsetParent !== null).slice(0, 2).map((n) => ({ text: n.querySelector("span")?.textContent, ...n.getBoundingClientRect().toJSON() })));
+  ok("slider fields show their name and sit one under the other", blocks[0]?.text === "Width" && blocks[1]?.text === "Height" && blocks[1].top >= blocks[0].bottom && blocks[0].width > 300, JSON.stringify(blocks));
+
+  // ---------- Reset size ----------
+  const sized = (await els())[1];
+  ok("setup: the shape is resized and turned", sized.width === 500 && sized.rotation === 45);
+  const cx = sized.x + sized.width / 2;
+  const cy = sized.y + sized.height / 2;
+  await (await page.waitForSelector("button ::-p-text(Reset size)")).tap();
+  await saved();
+  let reset = (await els())[1];
+  ok("Reset size returns to the size it had when it was added", reset.width === 378 && reset.height === 378, `${reset.width}x${reset.height}`);
+  ok("it keeps the centre and the rotation", Math.abs(reset.x + reset.width / 2 - cx) <= 1 && Math.abs(reset.y + reset.height / 2 - cy) <= 1 && reset.rotation === 45);
+  ok("then the button is disabled", await page.$eval("button ::-p-text(Reset size)", (n) => n.disabled));
+  await page.screenshot({ path: `${SHOTS}/m-04-reset.png` });
+  await tapText("Done");
+  await sleep(200);
+  await (await page.waitForSelector(L("Undo"))).tap();
+  await saved();
+  reset = (await els())[1];
+  ok("Reset size is one undo step", reset.width === 500 && reset.height === sized.height);
+
   // Desktop pointer: the sliders stay hidden, the panel looks as before.
   const editorUrl = page.url();
   const desk = await browser.newPage();
@@ -189,6 +246,11 @@ try {
   await desk.waitForSelector(L("Width"));
   ok("with a mouse the sliders are hidden and the panel is as before", await desk.$$eval('[data-testid="number-slider"]', (ns) => ns.length > 0 && ns.every((n) => n.offsetParent === null)));
   ok("with a mouse the multi-select toggle is not shown", !(await desk.$('[data-testid="multi-select"]')));
+  await desk.goto(BASE, { waitUntil: "networkidle0" });
+  ok(
+    "the desktop dashboard keeps its tabs and has no bottom bar",
+    await desk.$eval('nav[aria-label="Sections"]:not([data-testid])', (n) => n.offsetParent !== null) && (await desk.$eval('[data-testid="mobile-nav"]', (n) => getComputedStyle(n).display === "none")),
+  );
   await desk.close();
 
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
