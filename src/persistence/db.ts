@@ -6,133 +6,136 @@
  *  - projectVersions: saved earlier states of a project (version history)
  * Documents never embed binary data; they reference assets by id.
  */
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import { versionsToPrune, type VersionInfo, type VersionKind } from "@/document/history";
-import { createId } from "@/document/ids";
-import { parseProject } from "@/document/migrations";
-import { cloneProject, usedAssetIds } from "@/document/operations";
-import type { AssetRef, Project, ProjectMode } from "@/document/schema";
-import { assetKind, normalizeCollections, type AssetUsage, type LibraryItem } from "./libraryModel";
+import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { versionsToPrune, type VersionInfo, type VersionKind } from '@/document/history'
+import { createId } from '@/document/ids'
+import { parseProject } from '@/document/migrations'
+import { cloneProject, usedAssetIds } from '@/document/operations'
+import type { AssetRef, Project, ProjectMode } from '@/document/schema'
+import { assetKind, normalizeCollections, type AssetUsage, type LibraryItem } from './libraryModel'
 
 export interface ProjectMeta {
-  id: string;
-  name: string;
-  mode: ProjectMode;
-  width: number;
-  height: number;
-  slideCount: number;
-  createdAt: string;
-  updatedAt: string;
-  thumbnail: Blob | null;
+  id: string
+  name: string
+  mode: ProjectMode
+  width: number
+  height: number
+  slideCount: number
+  createdAt: string
+  updatedAt: string
+  thumbnail: Blob | null
 }
 
 export interface StoredAsset extends AssetRef {
-  blob: Blob;
+  blob: Blob
   /** Video assets only: a small still frame for instant previews (never referenced by documents). */
-  poster?: Blob;
+  poster?: Blob
   /** Heavy videos only: a small copy the editor plays instead of the original (see proxy.ts). */
-  proxy?: Blob;
+  proxy?: Blob
   /** Audio assets only: waveform bars, 0..1 (decoration for the timeline). */
-  peaks?: number[];
+  peaks?: number[]
   /** Library organisation (see libraryModel.ts). Never part of a document. */
-  favorite?: boolean;
-  collections?: string[];
-  createdAt: string;
+  favorite?: boolean
+  collections?: string[]
+  createdAt: string
+  duration?: number
 }
 
 export interface StoredFont {
-  id: string;
+  id: string
   /** Stable CSS family name used in documents. */
-  family: string;
+  family: string
   /** Display name, renameable. */
-  label: string;
-  weight: number;
-  italic: boolean;
-  fileName: string;
-  format: string;
-  size: number;
-  blob: Blob;
-  createdAt: string;
+  label: string
+  weight: number
+  italic: boolean
+  fileName: string
+  format: string
+  size: number
+  blob: Blob
+  createdAt: string
 }
 
 export interface StoredTemplate {
-  id: string;
-  name: string;
-  category: string;
-  description?: string;
+  id: string
+  name: string
+  category: string
+  description?: string
   /** A complete project document: templates are editable objects, never flattened images. */
-  doc: unknown;
-  thumbnail: Blob | null;
-  createdAt: string;
+  doc: unknown
+  thumbnail: Blob | null
+  createdAt: string
 }
 
 export interface BrandKit {
-  id: string;
-  name: string;
-  colors: string[];
-  headingFont: string;
-  bodyFont: string;
-  logos: AssetRef[];
-  updatedAt: string;
+  id: string
+  name: string
+  colors: string[]
+  headingFont: string
+  bodyFont: string
+  logos: AssetRef[]
+  updatedAt: string
 }
 
 /** One saved state of a project (see src/document/history.ts for the rules). */
 export interface StoredVersion extends VersionInfo {
-  projectId: string;
-  slideCount: number;
+  projectId: string
+  slideCount: number
   /** The whole document as it was, in the schema version of that moment (migrated when opened). */
-  doc: unknown;
-  thumbnail: Blob | null;
+  doc: unknown
+  thumbnail: Blob | null
 }
 /** A version as the history list shows it: everything but the document itself. */
-export type VersionSummary = Omit<StoredVersion, "doc">;
+export type VersionSummary = Omit<StoredVersion, 'doc'>
 
 interface Schema extends DBSchema {
-  projectVersions: { key: string; value: StoredVersion; indexes: { projectId: string } };
-  projectMeta: { key: string; value: ProjectMeta; indexes: { updatedAt: string } };
-  projectDocs: { key: string; value: unknown };
-  assets: { key: string; value: StoredAsset };
-  fonts: { key: string; value: StoredFont };
-  templates: { key: string; value: StoredTemplate };
-  brandKits: { key: string; value: BrandKit };
+  projectVersions: { key: string; value: StoredVersion; indexes: { projectId: string } }
+  projectMeta: { key: string; value: ProjectMeta; indexes: { updatedAt: string } }
+  projectDocs: { key: string; value: unknown }
+  assets: { key: string; value: StoredAsset }
+  fonts: { key: string; value: StoredFont }
+  templates: { key: string; value: StoredTemplate }
+  brandKits: { key: string; value: BrandKit }
 }
 
-const DB_NAME = "creative-carousel-studio";
-const DB_VERSION = 3;
+const DB_NAME = 'creative-carousel-studio'
+const DB_VERSION = 3
 
-let dbPromise: Promise<IDBPDatabase<Schema>> | null = null;
+let dbPromise: Promise<IDBPDatabase<Schema>> | null = null
 
 function db() {
   if (!dbPromise) {
     dbPromise = openDB<Schema>(DB_NAME, DB_VERSION, {
       upgrade(database, oldVersion) {
         if (oldVersion < 1) {
-          const meta = database.createObjectStore("projectMeta", { keyPath: "id" });
-          meta.createIndex("updatedAt", "updatedAt");
-          database.createObjectStore("projectDocs");
-          database.createObjectStore("assets", { keyPath: "id" });
+          const meta = database.createObjectStore('projectMeta', { keyPath: 'id' })
+          meta.createIndex('updatedAt', 'updatedAt')
+          database.createObjectStore('projectDocs')
+          database.createObjectStore('assets', { keyPath: 'id' })
         }
         if (oldVersion < 2) {
-          database.createObjectStore("fonts", { keyPath: "id" });
-          database.createObjectStore("templates", { keyPath: "id" });
-          database.createObjectStore("brandKits", { keyPath: "id" });
+          database.createObjectStore('fonts', { keyPath: 'id' })
+          database.createObjectStore('templates', { keyPath: 'id' })
+          database.createObjectStore('brandKits', { keyPath: 'id' })
         }
         if (oldVersion < 3) {
-          database.createObjectStore("projectVersions", { keyPath: "id" }).createIndex("projectId", "projectId");
+          database
+            .createObjectStore('projectVersions', { keyPath: 'id' })
+            .createIndex('projectId', 'projectId')
         }
       },
-    });
+    })
     dbPromise.catch(() => {
-      dbPromise = null;
-    });
+      dbPromise = null
+    })
   }
-  return dbPromise;
+  return dbPromise
 }
 
 /** Test hook: forget the cached connection. */
 export async function closeDb() {
-  if (dbPromise) (await dbPromise).close();
-  dbPromise = null;
+  if (dbPromise) (await dbPromise).close()
+  dbPromise = null
 }
 
 function metaOf(project: Project, thumbnail: Blob | null): ProjectMeta {
@@ -146,13 +149,13 @@ function metaOf(project: Project, thumbnail: Blob | null): ProjectMeta {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     thumbnail,
-  };
+  }
 }
 
 /** Most recently modified first. */
 export async function listProjects(): Promise<ProjectMeta[]> {
-  const all = await (await db()).getAllFromIndex("projectMeta", "updatedAt");
-  return all.reverse();
+  const all = await (await db()).getAllFromIndex('projectMeta', 'updatedAt')
+  return all.reverse()
 }
 
 /**
@@ -160,80 +163,96 @@ export async function listProjects(): Promise<ProjectMeta[]> {
  * Pass thumbnail undefined to keep the existing cover.
  */
 export async function saveProject(project: Project, thumbnail?: Blob | null): Promise<void> {
-  const tx = (await db()).transaction(["projectMeta", "projectDocs"], "readwrite");
-  const metaStore = tx.objectStore("projectMeta");
-  const existing = await metaStore.get(project.id);
-  const cover = thumbnail === undefined ? (existing?.thumbnail ?? null) : thumbnail;
-  await Promise.all([metaStore.put(metaOf(project, cover)), tx.objectStore("projectDocs").put(project, project.id), tx.done]);
+  const tx = (await db()).transaction(['projectMeta', 'projectDocs'], 'readwrite')
+  const metaStore = tx.objectStore('projectMeta')
+  const existing = await metaStore.get(project.id)
+  const cover = thumbnail === undefined ? (existing?.thumbnail ?? null) : thumbnail
+  await Promise.all([
+    metaStore.put(metaOf(project, cover)),
+    tx.objectStore('projectDocs').put(project, project.id),
+    tx.done,
+  ])
 }
 
 /** Loads, migrates and validates. Throws DocumentError when the stored data is unusable. */
 export async function loadProject(id: string): Promise<Project | null> {
-  const raw = await (await db()).get("projectDocs", id);
-  return raw === undefined ? null : parseProject(raw);
+  const raw = await (await db()).get('projectDocs', id)
+  return raw === undefined ? null : parseProject(raw)
 }
 
 export async function renameStoredProject(id: string, name: string): Promise<void> {
-  const project = await loadProject(id);
-  const trimmed = name.trim();
-  if (!project || !trimmed) return;
-  await saveProject({ ...project, name: trimmed, updatedAt: new Date().toISOString() });
+  const project = await loadProject(id)
+  const trimmed = name.trim()
+  if (!project || !trimmed) return
+  await saveProject({ ...project, name: trimmed, updatedAt: new Date().toISOString() })
 }
 
 export async function duplicateStoredProject(id: string): Promise<Project | null> {
-  const project = await loadProject(id);
-  if (!project) return null;
-  const copy = cloneProject(project, `${project.name} copy`);
-  const meta = await (await db()).get("projectMeta", id);
-  await saveProject(copy, meta?.thumbnail ?? null);
-  return copy;
+  const project = await loadProject(id)
+  if (!project) return null
+  const copy = cloneProject(project, `${project.name} copy`)
+  const meta = await (await db()).get('projectMeta', id)
+  await saveProject(copy, meta?.thumbnail ?? null)
+  return copy
 }
 
 /** Deletes the project, its version history, and every asset nothing else still references. */
 export async function deleteProject(id: string): Promise<void> {
-  const database = await db();
-  const tx = database.transaction(["projectMeta", "projectDocs", "projectVersions", "assets", "templates", "brandKits"], "readwrite");
-  const docs = tx.objectStore("projectDocs");
-  const versions = tx.objectStore("projectVersions");
-  const target = (await docs.get(id)) as Project | undefined;
-  const history = await versions.index("projectId").getAll(id);
-  await docs.delete(id);
-  await tx.objectStore("projectMeta").delete(id);
-  for (const v of history) await versions.delete(v.id);
+  const database = await db()
+  const tx = database.transaction(
+    ['projectMeta', 'projectDocs', 'projectVersions', 'assets', 'templates', 'brandKits'],
+    'readwrite',
+  )
+  const docs = tx.objectStore('projectDocs')
+  const versions = tx.objectStore('projectVersions')
+  const target = (await docs.get(id)) as Project | undefined
+  const history = await versions.index('projectId').getAll(id)
+  await docs.delete(id)
+  await tx.objectStore('projectMeta').delete(id)
+  for (const v of history) await versions.delete(v.id)
   // A version can reference an asset the current document no longer uses.
-  const candidates = new Map<string, true>();
-  for (const a of target?.assets ?? []) candidates.set(a.id, true);
-  for (const v of history) for (const a of (v.doc as Project | undefined)?.assets ?? []) candidates.set(a.id, true);
+  const candidates = new Map<string, true>()
+  for (const a of target?.assets ?? []) candidates.set(a.id, true)
+  for (const v of history)
+    for (const a of (v.doc as Project | undefined)?.assets ?? []) candidates.set(a.id, true)
   if (candidates.size > 0) {
     const stillUsed = await assetsInUse(
       (await docs.getAll()) as Project[],
-      await tx.objectStore("templates").getAll(),
-      await tx.objectStore("brandKits").getAll(),
+      await tx.objectStore('templates').getAll(),
+      await tx.objectStore('brandKits').getAll(),
       await versions.getAll(),
-    );
-    for (const assetId of candidates.keys()) if (!stillUsed.has(assetId)) await tx.objectStore("assets").delete(assetId);
+    )
+    for (const assetId of candidates.keys())
+      if (!stillUsed.has(assetId)) await tx.objectStore('assets').delete(assetId)
   }
-  await tx.done;
+  await tx.done
 }
 
 /** Asset ids referenced by any project, saved template, brand kit or saved version. */
-async function assetsInUse(projects: Project[], templates: StoredTemplate[], kits: BrandKit[], versions: StoredVersion[] = []) {
-  const used = new Set<string>();
-  for (const p of projects) for (const a of p.assets ?? []) used.add(a.id);
-  for (const t of templates) for (const a of (t.doc as Project | undefined)?.assets ?? []) used.add(a.id);
-  for (const k of kits) for (const a of k.logos ?? []) used.add(a.id);
-  for (const v of versions) for (const a of (v.doc as Project | undefined)?.assets ?? []) used.add(a.id);
-  return used;
+async function assetsInUse(
+  projects: Project[],
+  templates: StoredTemplate[],
+  kits: BrandKit[],
+  versions: StoredVersion[] = [],
+) {
+  const used = new Set<string>()
+  for (const p of projects) for (const a of p.assets ?? []) used.add(a.id)
+  for (const t of templates)
+    for (const a of (t.doc as Project | undefined)?.assets ?? []) used.add(a.id)
+  for (const k of kits) for (const a of k.logos ?? []) used.add(a.id)
+  for (const v of versions)
+    for (const a of (v.doc as Project | undefined)?.assets ?? []) used.add(a.id)
+  return used
 }
 
 // --- Version history ------------------------------------------------------
 
-const summaryOf = ({ doc: _doc, ...summary }: StoredVersion): VersionSummary => (void _doc, summary);
+const summaryOf = ({ doc: _doc, ...summary }: StoredVersion): VersionSummary => (void _doc, summary)
 
 /** Newest first, without the documents (those are loaded one at a time). */
 export async function listVersions(projectId: string): Promise<VersionSummary[]> {
-  const all = await (await db()).getAllFromIndex("projectVersions", "projectId", projectId);
-  return all.map(summaryOf).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const all = await (await db()).getAllFromIndex('projectVersions', 'projectId', projectId)
+  return all.map(summaryOf).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 /**
@@ -254,135 +273,138 @@ export async function saveVersion(
     slideCount: project.slides.length,
     doc: project,
     thumbnail: opts.thumbnail ?? null,
-  };
-  const tx = (await db()).transaction("projectVersions", "readwrite");
-  await tx.store.put(version);
-  const all = await tx.store.index("projectId").getAll(project.id);
-  for (const id of versionsToPrune(all)) await tx.store.delete(id);
-  await tx.done;
-  return summaryOf(version);
+  }
+  const tx = (await db()).transaction('projectVersions', 'readwrite')
+  await tx.store.put(version)
+  const all = await tx.store.index('projectId').getAll(project.id)
+  for (const id of versionsToPrune(all)) await tx.store.delete(id)
+  await tx.done
+  return summaryOf(version)
 }
 
 /** The document of a version, migrated to the current schema and validated. Null when it is gone. */
 export async function loadVersion(id: string): Promise<Project | null> {
-  const stored = await (await db()).get("projectVersions", id);
-  return stored ? parseProject(stored.doc) : null;
+  const stored = await (await db()).get('projectVersions', id)
+  return stored ? parseProject(stored.doc) : null
 }
 
 /** Give a version a name (it is then kept until deleted) or take the name away with "". */
 export async function renameVersion(id: string, name: string): Promise<void> {
-  const tx = (await db()).transaction("projectVersions", "readwrite");
-  const stored = await tx.store.get(id);
+  const tx = (await db()).transaction('projectVersions', 'readwrite')
+  const stored = await tx.store.get(id)
   if (stored) {
-    const { name: _old, ...rest } = stored;
-    void _old;
-    await tx.store.put(name.trim() ? { ...rest, name: name.trim().slice(0, 80) } : rest);
+    const { name: _old, ...rest } = stored
+    void _old
+    await tx.store.put(name.trim() ? { ...rest, name: name.trim().slice(0, 80) } : rest)
   }
-  await tx.done;
+  await tx.done
 }
 
 export async function deleteVersion(id: string): Promise<void> {
-  await (await db()).delete("projectVersions", id);
+  await (await db()).delete('projectVersions', id)
 }
 
 // --- Custom fonts ---------------------------------------------------------
 
 export async function listStoredFonts(): Promise<StoredFont[]> {
-  return (await db()).getAll("fonts");
+  return (await db()).getAll('fonts')
 }
 export async function putStoredFont(font: StoredFont): Promise<void> {
-  await (await db()).put("fonts", font);
+  await (await db()).put('fonts', font)
 }
 export async function deleteStoredFont(id: string): Promise<void> {
-  await (await db()).delete("fonts", id);
+  await (await db()).delete('fonts', id)
 }
 
 // --- User templates -------------------------------------------------------
 
 export async function listStoredTemplates(): Promise<StoredTemplate[]> {
-  const all = await (await db()).getAll("templates");
-  return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const all = await (await db()).getAll('templates')
+  return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 export async function putStoredTemplate(template: StoredTemplate): Promise<void> {
-  await (await db()).put("templates", template);
+  await (await db()).put('templates', template)
 }
 export async function getStoredTemplate(id: string): Promise<StoredTemplate | undefined> {
-  return (await db()).get("templates", id);
+  return (await db()).get('templates', id)
 }
 /** Change parts of a stored template in one transaction. Does nothing when it no longer exists. */
-export async function patchStoredTemplate(id: string, patch: Partial<Omit<StoredTemplate, "id" | "createdAt">>): Promise<boolean> {
-  const tx = (await db()).transaction("templates", "readwrite");
-  const stored = await tx.store.get(id);
-  if (stored) await tx.store.put({ ...stored, ...patch });
-  await tx.done;
-  return !!stored;
+export async function patchStoredTemplate(
+  id: string,
+  patch: Partial<Omit<StoredTemplate, 'id' | 'createdAt'>>,
+): Promise<boolean> {
+  const tx = (await db()).transaction('templates', 'readwrite')
+  const stored = await tx.store.get(id)
+  if (stored) await tx.store.put({ ...stored, ...patch })
+  await tx.done
+  return !!stored
 }
 /** True when an asset with this id is already stored (its content is then kept as it is). */
 export async function hasAsset(id: string): Promise<boolean> {
-  return (await (await db()).getKey("assets", id)) !== undefined;
+  return (await (await db()).getKey('assets', id)) !== undefined
 }
 export async function deleteStoredTemplate(id: string): Promise<void> {
-  await (await db()).delete("templates", id);
+  await (await db()).delete('templates', id)
 }
 
 // --- Brand kits -----------------------------------------------------------
 
 export async function listBrandKits(): Promise<BrandKit[]> {
-  const all = await (await db()).getAll("brandKits");
-  return all.sort((a, b) => a.name.localeCompare(b.name));
+  const all = await (await db()).getAll('brandKits')
+  return all.sort((a, b) => a.name.localeCompare(b.name))
 }
 export async function getBrandKit(id: string): Promise<BrandKit | undefined> {
-  return (await db()).get("brandKits", id);
+  return (await db()).get('brandKits', id)
 }
 export async function putBrandKit(kit: BrandKit): Promise<void> {
-  await (await db()).put("brandKits", kit);
+  await (await db()).put('brandKits', kit)
 }
 export async function deleteBrandKit(id: string): Promise<void> {
-  await (await db()).delete("brandKits", id);
+  await (await db()).delete('brandKits', id)
 }
 
 export async function putAsset(asset: StoredAsset): Promise<void> {
-  await (await db()).put("assets", asset);
+  await (await db()).put('assets', asset)
 }
 
 export async function getAssetBlob(id: string): Promise<Blob | undefined> {
-  return (await (await db()).get("assets", id))?.blob;
+  return (await (await db()).get('assets', id))?.blob
 }
 
 export async function getAssetPoster(id: string): Promise<Blob | undefined> {
-  return (await (await db()).get("assets", id))?.poster;
+  return (await (await db()).get('assets', id))?.poster
 }
 
 export async function getAssetProxy(id: string): Promise<Blob | undefined> {
-  return (await (await db()).get("assets", id))?.proxy;
+  return (await (await db()).get('assets', id))?.proxy
 }
 
 /** Attach a preview proxy to a stored video. Does nothing when the asset was deleted in the meantime. */
 export async function putAssetProxy(id: string, proxy: Blob): Promise<void> {
-  const tx = (await db()).transaction("assets", "readwrite");
-  const stored = await tx.store.get(id);
-  if (stored) await tx.store.put({ ...stored, proxy });
-  await tx.done;
+  const tx = (await db()).transaction('assets', 'readwrite')
+  const stored = await tx.store.get(id)
+  if (stored) await tx.store.put({ ...stored, proxy })
+  await tx.done
 }
 
 export async function getAssetPeaks(id: string): Promise<number[] | undefined> {
-  return (await (await db()).get("assets", id))?.peaks;
+  return (await (await db()).get('assets', id))?.peaks
 }
 
 /** Asset refs of a project that have no element using them (candidates for cleanup UI). */
 export function unusedAssets(project: Project): AssetRef[] {
-  const used = usedAssetIds(project);
-  return project.assets.filter((a) => !used.has(a.id));
+  const used = usedAssetIds(project)
+  return project.assets.filter((a) => !used.has(a.id))
 }
 
 /** Ask the browser not to evict our storage under pressure. Best effort. */
 export async function requestPersistentStorage(): Promise<boolean> {
   try {
-    if (navigator.storage?.persist) return await navigator.storage.persist();
+    if (navigator.storage?.persist) return await navigator.storage.persist()
   } catch {
     /* not supported */
   }
-  return false;
+  return false
 }
 
 // --- Asset library ----------------------------------------------------------
@@ -392,26 +414,37 @@ export async function requestPersistentStorage(): Promise<boolean> {
  * local, single-user library, so that stays cheap enough for the Assets tab.
  */
 export async function listLibrary(): Promise<LibraryItem[]> {
-  const tx = (await db()).transaction(["assets", "projectDocs", "templates", "brandKits", "projectVersions"]);
+  const tx = (await db()).transaction([
+    'assets',
+    'projectDocs',
+    'templates',
+    'brandKits',
+    'projectVersions',
+  ])
   const [assets, projects, templates, kits, versions] = await Promise.all([
-    tx.objectStore("assets").getAll(),
-    tx.objectStore("projectDocs").getAll() as Promise<Project[]>,
-    tx.objectStore("templates").getAll(),
-    tx.objectStore("brandKits").getAll(),
-    tx.objectStore("projectVersions").getAll(),
-  ]);
-  await tx.done;
-  const usage = new Map<string, AssetUsage>();
+    tx.objectStore('assets').getAll(),
+    tx.objectStore('projectDocs').getAll() as Promise<Project[]>,
+    tx.objectStore('templates').getAll(),
+    tx.objectStore('brandKits').getAll(),
+    tx.objectStore('projectVersions').getAll(),
+  ])
+  await tx.done
+  const usage = new Map<string, AssetUsage>()
   const at = (id: string) => {
-    let u = usage.get(id);
-    if (!u) usage.set(id, (u = { projects: [], templates: [], brandKits: [], versions: 0 }));
-    return u;
-  };
-  for (const p of projects) for (const a of p?.assets ?? []) at(a.id).projects.push(p.name || "Untitled");
-  for (const t of templates) for (const a of (t.doc as Project | undefined)?.assets ?? []) at(a.id).templates.push(t.name);
-  for (const k of kits) for (const a of k.logos ?? []) at(a.id).brandKits.push(k.name);
-  for (const v of versions) for (const a of (v.doc as Project | undefined)?.assets ?? []) at(a.id).versions += 1;
-  for (const u of usage.values()) for (const names of [u.projects, u.templates, u.brandKits]) names.sort((a, b) => a.localeCompare(b));
+    let u = usage.get(id)
+    if (!u) usage.set(id, (u = { projects: [], templates: [], brandKits: [], versions: 0 }))
+    return u
+  }
+  for (const p of projects)
+    for (const a of p?.assets ?? []) at(a.id).projects.push(p.name || 'Untitled')
+  for (const t of templates)
+    for (const a of (t.doc as Project | undefined)?.assets ?? []) at(a.id).templates.push(t.name)
+  for (const k of kits) for (const a of k.logos ?? []) at(a.id).brandKits.push(k.name)
+  for (const v of versions)
+    for (const a of (v.doc as Project | undefined)?.assets ?? []) at(a.id).versions += 1
+  for (const u of usage.values())
+    for (const names of [u.projects, u.templates, u.brandKits])
+      names.sort((a, b) => a.localeCompare(b))
   return assets.map((stored) => ({
     id: stored.id,
     name: stored.name,
@@ -426,21 +459,26 @@ export async function listLibrary(): Promise<LibraryItem[]> {
     collections: stored.collections ?? [],
     storedBytes: stored.blob.size + (stored.poster?.size ?? 0) + (stored.proxy?.size ?? 0),
     usage: usage.get(stored.id) ?? { projects: [], templates: [], brandKits: [], versions: 0 },
-  }));
+  }))
 }
 
 /** Change the library fields of an asset. Does nothing when the asset no longer exists. */
-export async function updateAssetLibraryInfo(id: string, patch: { favorite?: boolean; collections?: string[] }): Promise<void> {
-  const tx = (await db()).transaction("assets", "readwrite");
-  const stored = await tx.store.get(id);
+export async function updateAssetLibraryInfo(
+  id: string,
+  patch: { favorite?: boolean; collections?: string[] },
+): Promise<void> {
+  const tx = (await db()).transaction('assets', 'readwrite')
+  const stored = await tx.store.get(id)
   if (stored) {
     await tx.store.put({
       ...stored,
       ...(patch.favorite !== undefined ? { favorite: patch.favorite } : {}),
-      ...(patch.collections !== undefined ? { collections: normalizeCollections(patch.collections) } : {}),
-    });
+      ...(patch.collections !== undefined
+        ? { collections: normalizeCollections(patch.collections) }
+        : {}),
+    })
   }
-  await tx.done;
+  await tx.done
 }
 
 /**
@@ -448,13 +486,13 @@ export async function updateAssetLibraryInfo(id: string, patch: { favorite?: boo
  * show them as missing, so callers must warn first (see usageSummary).
  */
 export async function deleteAsset(id: string): Promise<void> {
-  await (await db()).delete("assets", id);
+  await (await db()).delete('assets', id)
 }
 
 /** A small picture for the library grid: the image itself, or the poster frame of a video. */
 export async function getAssetPreview(id: string): Promise<Blob | undefined> {
-  const stored = await (await db()).get("assets", id);
-  if (!stored) return undefined;
-  if (stored.poster) return stored.poster;
-  return stored.mime.startsWith("image/") ? stored.blob : undefined;
+  const stored = await (await db()).get('assets', id)
+  if (!stored) return undefined
+  if (stored.poster) return stored.poster
+  return stored.mime.startsWith('image/') ? stored.blob : undefined
 }
