@@ -33,16 +33,12 @@ const saved = async () => {
   await page.waitForSelector('[data-testid="save-status"][data-status="saved"]', { timeout: 15000 });
 };
 const projectId = () => new URL(page.url()).searchParams.get("id");
-const idb = (fn, ...args) => page.evaluate(
-  (source, a) =>
-    new Promise((resolve, reject) => {
-      const req = indexedDB.open("creative-carousel-studio");
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => Promise.resolve(new Function("db", "args", `return (${source})(db, ...args)`)(req.result, a)).then((v) => (req.result.close(), resolve(v)), reject);
-    }),
-  fn.toString(),
-  args,
-);
+const idb = (fn, ...args) =>
+  // Evaluated as a string through the DevTools protocol, which the page's Content Security Policy does not restrict.
+  page.evaluate(`(async () => {
+    const db = await new Promise((res, rej) => { const r = indexedDB.open("creative-carousel-studio"); r.onerror = () => rej(r.error); r.onsuccess = () => res(r.result); });
+    try { return await (${fn.toString()})(db, ...${JSON.stringify(args)}); } finally { db.close(); }
+  })()`);
 const readDoc = () => idb((db, id) => new Promise((res) => { const r = db.transaction("projectDocs").objectStore("projectDocs").get(id); r.onsuccess = () => res(r.result); }), projectId());
 const elementCount = async () => (await readDoc()).slides[0].elements.length;
 const until = async (probe, timeout = 6000) => {

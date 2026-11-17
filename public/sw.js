@@ -3,10 +3,12 @@
  * - install:  precache both app pages plus every script, style and font they reference
  * - navigate: network first, cached page as fallback (so updates arrive when online)
  * - /_next/static: cache first (file names are content hashed, so they never change)
+ * - message {type: "cache-scripts", urls}: the page reports code it loaded on demand (dashboard
+ *   tabs, zip library, video export), so that code is available offline from the first visit on
  * Projects, images and fonts chosen by the user live in IndexedDB, not here.
  * Bump VERSION to drop old caches.
  */
-const VERSION = "ccs-shell-v1";
+const VERSION = "ccs-shell-v2";
 const PAGES = ["/", "/editor"];
 const STATIC_RE = /\/_next\/static\/[^"'\\\s)<>]+/g;
 
@@ -96,4 +98,26 @@ self.addEventListener("fetch", (event) => {
   else if (url.pathname.startsWith("/icons/") || url.pathname === "/manifest.webmanifest" || url.pathname === "/favicon.ico") {
     event.respondWith(staleWhileRevalidate(request));
   }
+});
+
+// Code the page fetched later than the HTML (so the install step could not know about it).
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "cache-scripts" || !Array.isArray(data.urls)) return;
+  event.waitUntil(
+    caches.open(VERSION).then(async (cache) => {
+      for (const raw of data.urls.slice(0, 200)) {
+        let url;
+        try {
+          url = new URL(raw, self.location.origin);
+        } catch {
+          continue;
+        }
+        // Same origin, build output only: this cache must never hold anything else.
+        if (url.origin !== self.location.origin || !url.pathname.startsWith("/_next/static/")) continue;
+        if (await cache.match(url.pathname)) continue;
+        await cache.add(url.pathname).catch(() => undefined);
+      }
+    }),
+  );
 });

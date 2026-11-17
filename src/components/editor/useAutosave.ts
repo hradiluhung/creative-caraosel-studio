@@ -4,12 +4,17 @@ import { useEffect, useRef } from "react";
 import { renderThumbnail } from "@/export/exporter";
 import { getExportFrames } from "@/document/geometry";
 import type { Project } from "@/document/schema";
-import { saveProject } from "@/persistence/db";
+import { saveProject, saveProjectNow } from "@/persistence/db";
+import { describeStorageError } from "@/persistence/errors";
 import { saveTemplateDoc } from "@/templates";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 
 const DEBOUNCE_MS = 700;
+/** After a failed save, try again on our own: the cause (full disk, closed connection) is often temporary. */
+const RETRY_MS = 5000;
+/** Fired by the "Retry" control next to the save status. */
+export const RETRY_SAVE_EVENT = "ccs:retry-save";
 
 /**
  * Debounced, non-blocking autosave. Writes are serialized, and anything still
@@ -23,6 +28,7 @@ export function useAutosave(images: ImageStore, templateId: string | null = null
 
   useEffect(() => {
     let timer: number | undefined;
+    let retry: number | undefined;
     savedRef.current = useEditorStore.getState().project;
 
     const save = (withCover: boolean) => {
@@ -45,7 +51,9 @@ export function useAutosave(images: ImageStore, templateId: string | null = null
           const s = useEditorStore.getState();
           if (s.project === project) s.setSaveStatus("saved");
         } catch (e) {
-          useEditorStore.getState().setSaveStatus("error", e instanceof Error ? e.message : "Could not save");
+          useEditorStore.getState().setSaveStatus("error", describeStorageError(e, "Could not save"));
+          window.clearTimeout(retry);
+          retry = window.setTimeout(() => save(false), RETRY_MS);
         }
       });
     };
@@ -58,17 +66,34 @@ export function useAutosave(images: ImageStore, templateId: string | null = null
 
     const flush = () => {
       window.clearTimeout(timer);
+      window.clearTimeout(retry);
       save(false);
     };
-    const onVisibility = () => document.visibilityState === "hidden" && flush();
+    // Leaving while the last save failed would lose work: ask first.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (useEditorStore.getState().saveStatus === "error") e.preventDefault();
+    };
+    window.addEventListener(RETRY_SAVE_EVENT, flush);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    // The page is going away: the normal save is asynchronous and may never get to run, so the
+    // document is also queued for writing right now. Whichever finishes, the content is the same.
+    const flushNow = () => {
+      const project = useEditorStore.getState().project;
+      if (project && project !== savedRef.current && !templateId) saveProjectNow(project);
+      flush();
+    };
+    const onVisibility = () => document.visibilityState === "hidden" && flushNow();
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", flush);
+    window.addEventListener("pagehide", flushNow);
 
     return () => {
       flush();
+      window.clearTimeout(retry);
+      window.removeEventListener(RETRY_SAVE_EVENT, flush);
+      window.removeEventListener("beforeunload", onBeforeUnload);
       unsubscribe();
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pagehide", flushNow);
     };
   }, [images, templateId]);
 }

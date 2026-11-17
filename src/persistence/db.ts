@@ -103,6 +103,9 @@ const DB_VERSION = 3
 
 let dbPromise: Promise<IDBPDatabase<Schema>> | null = null
 
+/** The open connection, once there is one: needed for writes that cannot wait (see saveProjectNow). */
+let openDatabase: IDBPDatabase<Schema> | null = null
+
 function db() {
   if (!dbPromise) {
     dbPromise = openDB<Schema>(DB_NAME, DB_VERSION, {
@@ -124,10 +127,27 @@ function db() {
             .createIndex('projectId', 'projectId')
         }
       },
+      // Another tab wants to upgrade the database: let it, instead of blocking it forever.
+      // The next call here reopens the database at the new version.
+      blocking(_current, _blocked, event) {
+        ;(event.target as IDBDatabase).close()
+        dbPromise = null
+        openDatabase = null
+      },
+      // The browser closed the connection (storage pressure, site data cleared): reconnect on next use.
+      terminated() {
+        dbPromise = null
+        openDatabase = null
+      },
     })
-    dbPromise.catch(() => {
-      dbPromise = null
-    })
+    dbPromise.then(
+      (database) => {
+        openDatabase = database
+      },
+      () => {
+        dbPromise = null
+      },
+    )
   }
   return dbPromise
 }
@@ -136,6 +156,7 @@ function db() {
 export async function closeDb() {
   if (dbPromise) (await dbPromise).close()
   dbPromise = null
+  openDatabase = null
 }
 
 function metaOf(project: Project, thumbnail: Blob | null): ProjectMeta {
@@ -172,6 +193,37 @@ export async function saveProject(project: Project, thumbnail?: Blob | null): Pr
     tx.objectStore('projectDocs').put(project, project.id),
     tx.done,
   ])
+}
+
+/**
+ * Last-moment save for when the page is closing. Everything is queued in this very call, with no
+ * await before the write: a page that is being closed does not get another turn to continue an
+ * async function, but the browser still finishes database work that was already queued.
+ * The document is written first and alone, so it survives even if the list entry does not.
+ * Returns false when no connection is open yet (then nothing could have been edited either).
+ */
+export function saveProjectNow(project: Project): boolean {
+  const database = openDatabase
+  if (!database) return false
+  try {
+    // commit() asks the browser to finish the transaction without waiting for this page to
+    // receive the result, which a closing page never does.
+    const docs = database.transaction('projectDocs', 'readwrite')
+    void docs.store.put(project, project.id).catch(() => undefined)
+    void docs.done.catch(() => undefined)
+    docs.commit?.()
+    // Best effort: the list entry needs a read first, so it may not finish. The next normal save
+    // brings it up to date; the document above is what must not be lost.
+    const meta = database.transaction('projectMeta', 'readwrite')
+    void meta.store
+      .get(project.id)
+      .then((existing) => meta.store.put(metaOf(project, existing?.thumbnail ?? null)))
+      .catch(() => undefined)
+    void meta.done.catch(() => undefined)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Loads, migrates and validates. Throws DocumentError when the stored data is unusable. */
@@ -286,6 +338,18 @@ export async function saveVersion(
 export async function loadVersion(id: string): Promise<Project | null> {
   const stored = await (await db()).get('projectVersions', id)
   return stored ? parseProject(stored.doc) : null
+}
+
+/**
+ * Recovery: make a saved version the project again when the project itself can no longer be
+ * opened. The damaged document is replaced; the project keeps its id, so its other versions stay.
+ */
+export async function recoverProjectFromVersion(projectId: string, versionId: string, now = new Date()): Promise<Project | null> {
+  const stored = await (await db()).get('projectVersions', versionId)
+  if (!stored || stored.projectId !== projectId) return null
+  const project: Project = { ...parseProject(stored.doc), id: projectId, updatedAt: now.toISOString() }
+  await saveProject(project, stored.thumbnail)
+  return project
 }
 
 /** Give a version a name (it is then kept until deleted) or take the name away with "". */

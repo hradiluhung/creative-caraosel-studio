@@ -9,7 +9,7 @@ import { useObjectUrl } from "@/lib/useObjectUrl";
 import { cn } from "@/lib/cn";
 
 /** Square preview of a stored asset. Loads its picture lazily from IndexedDB. */
-export function AssetThumb({ item, className }: { item: LibraryItem; className?: string }) {
+export function AssetThumb({ item, className, hideStar = false }: { item: LibraryItem; className?: string; hideStar?: boolean }) {
   const [blob, setBlob] = useState<Blob | null>(null);
   useEffect(() => {
     let live = true;
@@ -29,7 +29,7 @@ export function AssetThumb({ item, className }: { item: LibraryItem; className?:
       ) : item.kind === "video" ? (
         <Film className="h-5 w-5 text-muted" />
       ) : null}
-      {item.favorite && <Star className="absolute top-1 left-1 h-3.5 w-3.5 fill-amber-400 text-amber-400 drop-shadow" aria-label="Favorite" />}
+      {item.favorite && !hideStar && <Star className="absolute top-1 left-1 h-3.5 w-3.5 fill-amber-400 text-amber-400 drop-shadow" aria-label="Favorite" />}
       {item.duration !== undefined && (
         <span className="absolute right-1 bottom-1 rounded-[3px] bg-black/65 px-1 text-[10px] leading-4 text-white tabular-nums">{formatSeconds(item.duration)}</span>
       )}

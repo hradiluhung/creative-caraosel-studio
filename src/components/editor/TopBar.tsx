@@ -3,6 +3,7 @@
 import { ArrowLeft, Download, History, LayoutTemplate, Maximize, Minus, PanelLeft, PanelRight, Plus, Redo2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { renameProject } from "@/document/operations";
+import { RETRY_SAVE_EVENT } from "./useAutosave";
 import { useEditorStore } from "@/store/editorStore";
 import { Button, IconButton } from "../ui/primitives";
 import { canvasApi } from "./canvasApi";
@@ -13,14 +14,21 @@ export function SaveStatus() {
   const status = useEditorStore((s) => s.saveStatus);
   const error = useEditorStore((s) => s.saveError);
   return (
-    <span
-      role="status"
-      data-testid="save-status"
-      data-status={status}
-      title={error ?? undefined}
-      className={status === "error" ? "text-xs text-danger" : "text-xs text-muted"}
-    >
-      {STATUS_TEXT[status]}
+    <span className="flex min-w-0 items-center gap-1.5">
+      <span
+        role="status"
+        data-testid="save-status"
+        data-status={status}
+        title={error ?? undefined}
+        className={status === "error" ? "truncate text-xs text-danger" : "text-xs text-muted"}
+      >
+        {status === "error" && error ? `Not saved: ${error}` : STATUS_TEXT[status]}
+      </span>
+      {status === "error" && (
+        <button type="button" data-testid="retry-save" onClick={() => window.dispatchEvent(new Event(RETRY_SAVE_EVENT))} className="shrink-0 text-xs font-semibold underline">
+          Retry
+        </button>
+      )}
     </span>
   );
 }

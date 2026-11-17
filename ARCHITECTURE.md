@@ -336,7 +336,7 @@ content, duration, sound track, fallback) and background music (import, waveform
 the exported sound). `tests/perf-playback.mjs` is a
 rough smoothness measurement for a slow phone.
 
-## 13. Phase 4: advanced features (in progress)
+## 13. Phase 4: advanced features
 
 `PHASE4_PLAN.md` is the working plan and progress log. Done: **D1 version history, D2 asset library, D3 layouts, D4 template creator, D5 image tools.**
 Skipped for the initial release: cloud sync, AI assistant, background removal.
@@ -372,7 +372,26 @@ Skipped for the initial release: cloud sync, AI assistant, background removal.
   The editor turns boxes into placeholder image elements or moves the selected photos into them;
   the layout itself is not stored, the result is ordinary elements.
 
-## 14. Known limitations (honest list)
+## 14. Phase 5: production
+
+Plan, results and limits are in `PHASE5_PLAN.md`. What it added to the architecture:
+
+- **Security headers** in `next.config.ts`, including a Content Security Policy that allows the
+  app's own origin plus blob and data URLs and nothing else. The app never talks to another
+  origin, and all e2e suites run under the policy.
+- **Storage errors** are classified in one pure module (`src/persistence/errors.ts`). Autosave
+  shows the reason, retries, and offers a manual retry.
+- **Two saves.** The normal one is asynchronous and writes document, list entry and cover in one
+  transaction. `saveProjectNow` is for the moment the page goes away: it queues the document write
+  synchronously and commits explicitly, because a closing page never continues an async function.
+- **Recovery** uses version history: `recoverProjectFromVersion` replaces a damaged project
+  document with a saved version under the same project id (`RecoveryScreen.tsx`).
+- **Loading on demand.** Dashboard tabs, the zip library and video export are separate chunks.
+  `ServiceWorkerRegistration` reports loaded build files to the service worker
+  (`cache-scripts` message), so on-demand code is available offline after the first visit.
+- **Accessibility checks** (axe-core, WCAG 2.1 A and AA) are part of `tests/e2e-phase5.mjs`.
+
+## 15. Known limitations (honest list)
 
 - **Video (Phase 3):** import was confirmed on an iPhone; playback smoothness there, the timeline, MP4
   export, music and preview proxies were only verified in desktop Chrome. No filters on video. On iOS the preview ignores volume and fades (the export applies
@@ -385,7 +404,7 @@ Skipped for the initial release: cloud sync, AI assistant, background removal.
   after the slider stops. Exports are always full quality.
 - Of the 25 template categories in the specification, 10 have a built-in template so far.
 - Not built yet from the Phase 2 wish list: curved text, auto-fit text, paragraph spacing, vertical
-  alignment, duotone and color-overlay filters, background removal, free-form drawing, pattern and
+  alignment, background removal, free-form drawing, pattern and
   image backgrounds, SVG import, gradient fills on shapes, RGB/HSL inputs (the native color picker
   covers them on most platforms).
 - Stickers are a small original vector set (18). Textures are procedural (grain, light leak,
@@ -395,8 +414,7 @@ Skipped for the initial release: cloud sync, AI assistant, background removal.
 ### Carried over from Phase 1
 
 - Local only: no accounts, no cloud sync, no project folders yet.
-- No grouping, rulers, grid, or free crop/pan of an image inside its frame (the frame always
-  center-crops). Resizing an image from a side handle shows a stretched preview until release.
+- No grouping, rulers or grid. Crop and pan inside a frame are sliders, not dragging on the canvas. Resizing an image from a side handle shows a stretched preview until release.
 - Seamless projects cannot be converted to independent ones (or back) after creation. In seamless
   mode slides can be added or removed at the end only.
 - Undo history is per editing session and is not persisted.

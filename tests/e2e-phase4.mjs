@@ -33,16 +33,12 @@ const saved = async () => {
   await page.waitForSelector('[data-testid="save-status"][data-status="saved"]', { timeout: 15000 });
 };
 const projectId = () => new URL(page.url()).searchParams.get("id");
-const idb = (fn, ...args) => page.evaluate(
-  (source, a) =>
-    new Promise((resolve, reject) => {
-      const req = indexedDB.open("creative-carousel-studio");
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => Promise.resolve(new Function("db", "args", `return (${source})(db, ...args)`)(req.result, a)).then((v) => (req.result.close(), resolve(v)), reject);
-    }),
-  fn.toString(),
-  args,
-);
+const idb = (fn, ...args) =>
+  // Evaluated as a string through the DevTools protocol, which the page's Content Security Policy does not restrict.
+  page.evaluate(`(async () => {
+    const db = await new Promise((res, rej) => { const r = indexedDB.open("creative-carousel-studio"); r.onerror = () => rej(r.error); r.onsuccess = () => res(r.result); });
+    try { return await (${fn.toString()})(db, ...${JSON.stringify(args)}); } finally { db.close(); }
+  })()`);
 const get = (db, store, key) => new Promise((res) => { const r = db.transaction(store).objectStore(store).get(key); r.onsuccess = () => res(r.result); });
 const readDoc = () => idb((db, id) => new Promise((res) => { const r = db.transaction("projectDocs").objectStore("projectDocs").get(id); r.onsuccess = () => res(r.result); }), projectId());
 const storedVersions = () =>
@@ -154,7 +150,7 @@ try {
   ok("versions are stored per project in their own store", left >= 3, String(left));
 
   // ---------- D2: asset library ----------
-  const cards = () => page.$$eval('[data-testid="asset-card"]', (ns) => ns.map((n) => ({ kind: n.dataset.kind, text: n.textContent, fav: !!n.querySelector('[aria-label="Favorite"]'), img: !!n.querySelector("img") })));
+  const cards = () => page.$$eval('[data-testid="asset-card"]', (ns) => ns.map((n) => ({ kind: n.dataset.kind, text: n.textContent, fav: n.parentElement.querySelector('[data-testid="card-favorite"]')?.getAttribute("aria-pressed") === "true", img: !!n.querySelector("img") })));
   const assetIds = () => idb((db) => new Promise((res) => { const r = db.transaction("assets").objectStore("assets").getAll(); r.onsuccess = () => res(r.result.map((a) => ({ id: a.id, name: a.name, favorite: a.favorite ?? false, collections: a.collections ?? [] }))); }));
   const openAssets = async () => {
     await page.goto(BASE, { waitUntil: "networkidle0" });
@@ -181,12 +177,30 @@ try {
   await click('[data-testid="asset-card"]');
   await page.waitForSelector('[data-testid="asset-usage"]');
   ok("the details say where the file is used", (await page.$eval('[data-testid="asset-usage"]', (n) => n.textContent)).includes("Project: Lib A"));
-  await clickText("Mark as favorite");
+  await clickText("Add to favorites");
   await page.type("#asset-collections", "Trip, trip , Clients");
   await clickText("Save");
   grid = (await until(async () => ((c) => ({ done: c[0]?.fav, c }))(await cards()))).c;
   let storedAssets = await assetIds();
   ok("favorite and collections are stored with the asset", grid[0].fav && storedAssets[0].favorite === true && JSON.stringify(storedAssets[0].collections) === '["Trip","Clients"]', JSON.stringify(storedAssets));
+
+  // Removing a favorite: from the details (applies at once, no Save) and from the star on the card.
+  await click('[data-testid="asset-card"]');
+  await page.waitForSelector('[data-testid="favorite-toggle"]');
+  ok("the details name the action that removes a favorite", (await page.$eval('[data-testid="favorite-toggle"]', (n) => n.textContent.trim())) === "Remove from favorites");
+  await click('[data-testid="favorite-toggle"]');
+  await until(async () => ({ done: (await assetIds())[0].favorite === false }));
+  await clickText("Close");
+  grid = (await until(async () => ((c) => ({ done: c[0] && !c[0].fav, c }))(await cards()))).c;
+  ok("a favorite can be removed from the details without pressing Save", (await assetIds())[0].favorite === false && !grid[0].fav && JSON.stringify((await assetIds())[0].collections) === '["Trip","Clients"]');
+  await click('[data-testid="card-favorite"]');
+  await until(async () => ({ done: (await assetIds())[0].favorite === true && (await cards())[0].fav }));
+  await click('[data-testid="card-favorite"]');
+  await until(async () => ({ done: (await assetIds())[0].favorite === false && !(await cards())[0].fav }));
+  ok("the star on a card removes the favorite with one click", (await assetIds())[0].favorite === false && !(await page.$('[role="dialog"]')));
+  await click('[data-testid="card-favorite"]');
+  await until(async () => ({ done: (await cards())[0].fav }));
+  ok("and adds it back", (await assetIds())[0].favorite === true);
 
   await (await page.$('[data-testid="library-input"]')).uploadFile(`${FIXTURES}/photo-b.png`);
   grid = (await until(async () => ((c) => ({ done: c.length === 2, c }))(await cards()))).c;
@@ -251,6 +265,11 @@ try {
   ok("in select mode a click selects instead of opening the details", (await page.$eval('[data-testid="bulk-count"]', (n) => n.textContent)) === "1 selected" && !(await page.$('[role="dialog"]')));
   await clickText("Select all shown (2)");
   ok("select all takes every file that is shown", (await page.$eval('[data-testid="bulk-count"]', (n) => n.textContent)) === "2 selected");
+  await click('[data-testid="bulk-bar"] button ::-p-text(Favorite)');
+  await until(async () => ({ done: (await assetIds()).every((a) => a.favorite) }));
+  await click('[data-testid="bulk-bar"] button ::-p-text(Unfavorite)');
+  await until(async () => ({ done: (await assetIds()).every((a) => !a.favorite) }));
+  ok("bulk Unfavorite clears the favorite on all selected files", (await assetIds()).every((a) => a.favorite === false));
   await click('[data-testid="bulk-bar"] button ::-p-text(Favorite)');
   await until(async () => ({ done: (await assetIds()).every((a) => a.favorite) }));
   await page.type(L("Collection to add to"), "Bulk set");

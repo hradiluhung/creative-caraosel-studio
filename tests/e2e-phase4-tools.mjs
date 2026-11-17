@@ -43,16 +43,12 @@ const setField = async (label, value) => {
   await f.type(String(value));
   await page.keyboard.press("Enter");
 };
-const idb = (fn, ...args) => page.evaluate(
-  (source, a) =>
-    new Promise((resolve, reject) => {
-      const req = indexedDB.open("creative-carousel-studio");
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => Promise.resolve(new Function("db", "args", `return (${source})(db, ...args)`)(req.result, a)).then((v) => (req.result.close(), resolve(v)), reject);
-    }),
-  fn.toString(),
-  args,
-);
+const idb = (fn, ...args) =>
+  // Evaluated as a string through the DevTools protocol, which the page's Content Security Policy does not restrict.
+  page.evaluate(`(async () => {
+    const db = await new Promise((res, rej) => { const r = indexedDB.open("creative-carousel-studio"); r.onerror = () => rej(r.error); r.onsuccess = () => res(r.result); });
+    try { return await (${fn.toString()})(db, ...${JSON.stringify(args)}); } finally { db.close(); }
+  })()`);
 const projectId = () => new URL(page.url()).searchParams.get("id");
 const readDoc = (id) =>
   page.evaluate(

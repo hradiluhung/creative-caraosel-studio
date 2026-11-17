@@ -28,13 +28,20 @@ function AssetDetails({ item, onClose }: { item: LibraryItem; onClose: (changed:
   const [favorite, setFavorite] = useState(item.favorite);
   const [confirming, setConfirming] = useState(false);
   const used = usageSummary(item.usage);
-  const dirty = favorite !== item.favorite || parseCollections(collections).join("|") !== item.collections.join("|");
+  const dirty = parseCollections(collections).join("|") !== item.collections.join("|");
+  // The star applies at once: no Save needed, and closing the dialog keeps it.
+  const toggleFavorite = () => {
+    const next = !favorite;
+    setFavorite(next);
+    void updateAssetLibraryInfo(item.id, { favorite: next });
+  };
+  const close = () => onClose(favorite !== item.favorite);
   const names = [...item.usage.projects.map((n) => `Project: ${n}`), ...item.usage.templates.map((n) => `Template: ${n}`), ...item.usage.brandKits.map((n) => `Brand kit: ${n}`)];
 
   return (
     <Dialog
       title={item.name}
-      onClose={() => onClose(false)}
+      onClose={close}
       footer={
         confirming ? (
           <>
@@ -50,13 +57,13 @@ function AssetDetails({ item, onClose }: { item: LibraryItem; onClose: (changed:
             <Button variant="ghost" className="mr-auto text-danger" onClick={() => setConfirming(true)}>
               <Trash2 className="h-4 w-4" /> Delete
             </Button>
-            <Button variant="ghost" onClick={() => onClose(false)}>
+            <Button variant="ghost" onClick={close}>
               Close
             </Button>
             <Button
               variant="primary"
               disabled={!dirty}
-              onClick={() => void updateAssetLibraryInfo(item.id, { favorite, collections: parseCollections(collections) }).then(() => onClose(true))}
+              onClick={() => void updateAssetLibraryInfo(item.id, { collections: parseCollections(collections) }).then(() => onClose(true))}
             >
               Save
             </Button>
@@ -71,8 +78,8 @@ function AssetDetails({ item, onClose }: { item: LibraryItem; onClose: (changed:
             <p className="text-ink">{describe(item)}</p>
             <p>{item.mime}</p>
             <p>Added {new Date(item.createdAt).toLocaleDateString()}</p>
-            <button type="button" aria-pressed={favorite} onClick={() => setFavorite(!favorite)} className="mt-1 flex items-center gap-1.5 text-ink hover:underline">
-              <Star className={favorite ? "h-3.5 w-3.5 fill-amber-400 text-amber-400" : "h-3.5 w-3.5"} /> {favorite ? "Favorite" : "Mark as favorite"}
+            <button type="button" aria-pressed={favorite} data-testid="favorite-toggle" onClick={toggleFavorite} className="mt-1 flex items-center gap-1.5 text-ink hover:underline">
+              <Star className={favorite ? "h-3.5 w-3.5 fill-amber-400 text-amber-400" : "h-3.5 w-3.5"} /> {favorite ? "Remove from favorites" : "Add to favorites"}
             </button>
           </div>
         </div>
@@ -257,8 +264,11 @@ export function AssetLibrary() {
               {chosen.length} selected
             </span>
             <span className="grow" />
-            <Button size="sm" disabled={chosen.length === 0} onClick={() => void bulk({ favorite: !chosen.every((i) => i.favorite) })}>
-              <Star className="h-3.5 w-3.5" /> {chosen.length > 0 && chosen.every((i) => i.favorite) ? "Unfavorite" : "Favorite"}
+            <Button size="sm" disabled={chosen.every((i) => i.favorite)} onClick={() => void bulk({ favorite: true })}>
+              <Star className="h-3.5 w-3.5" /> Favorite
+            </Button>
+            <Button size="sm" disabled={!chosen.some((i) => i.favorite)} onClick={() => void bulk({ favorite: false })}>
+              Unfavorite
             </Button>
             <form
               className="flex items-center gap-1"
@@ -304,27 +314,41 @@ export function AssetLibrary() {
       ) : (
         <section aria-label="Assets" className="grid grid-cols-3 gap-x-4 gap-y-5 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {shown.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              data-testid="asset-card"
-              data-kind={item.kind}
-              aria-pressed={selecting ? selected.has(item.id) : undefined}
-              onClick={() => (selecting ? toggle(item.id) : setOpen(item))}
-              className="group relative text-left"
-            >
-              <AssetThumb item={item} className={selecting && selected.has(item.id) ? "border-ink ring-2 ring-ink" : "group-hover:border-ink"} />
-              {selecting && (
-                <span className={`absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full border ${selected.has(item.id) ? "border-ink bg-ink text-bg" : "border-line-strong bg-bg/80"}`}>
-                  {selected.has(item.id) && <Check className="h-3 w-3" />}
-                </span>
+            <div key={item.id} className="group relative">
+              <button
+                type="button"
+                data-testid="asset-card"
+                data-kind={item.kind}
+                aria-pressed={selecting ? selected.has(item.id) : undefined}
+                onClick={() => (selecting ? toggle(item.id) : setOpen(item))}
+                className="block w-full text-left"
+              >
+                <AssetThumb item={item} hideStar={!selecting} className={selecting && selected.has(item.id) ? "border-ink ring-2 ring-ink" : "group-hover:border-ink"} />
+                {selecting && (
+                  <span className={`absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full border ${selected.has(item.id) ? "border-ink bg-ink text-bg" : "border-line-strong bg-bg/80"}`}>
+                    {selected.has(item.id) && <Check className="h-3 w-3" />}
+                  </span>
+                )}
+                <p className="mt-1.5 truncate text-xs font-medium">{item.name}</p>
+                <p className="truncate text-[11px] text-muted">
+                  {describe(item)}
+                  {usageSummary(item.usage) ? "" : " · unused"}
+                </p>
+              </button>
+              {!selecting && (
+                <button
+                  type="button"
+                  data-testid="card-favorite"
+                  aria-pressed={item.favorite}
+                  aria-label={item.favorite ? `Remove ${item.name} from favorites` : `Add ${item.name} to favorites`}
+                  title={item.favorite ? "Remove from favorites" : "Add to favorites"}
+                  onClick={() => void updateAssetLibraryInfo(item.id, { favorite: !item.favorite }).then(refresh)}
+                  className={`absolute top-1 left-1 flex h-7 w-7 items-center justify-center rounded-full bg-black/45 text-white transition-opacity hover:bg-black/65 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 ${item.favorite ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                >
+                  <Star className={item.favorite ? "h-3.5 w-3.5 fill-amber-400 text-amber-400" : "h-3.5 w-3.5"} />
+                </button>
               )}
-              <p className="mt-1.5 truncate text-xs font-medium">{item.name}</p>
-              <p className="truncate text-[11px] text-muted">
-                {describe(item)}
-                {usageSummary(item.usage) ? "" : " · unused"}
-              </p>
-            </button>
+            </div>
           ))}
         </section>
       )}

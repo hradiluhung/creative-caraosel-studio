@@ -86,7 +86,6 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
                       key={p.id}
                       type="button"
                       aria-pressed={presetId === p.id}
-                      aria-label={`${p.ratio}, ${p.usage}, ${p.width} by ${p.height} pixels`}
                       onClick={() => setPresetId(p.id)}
                       className={cn(
                         "flex flex-col items-center rounded-md border px-1 pt-2 pb-1.5",
@@ -98,13 +97,13 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
                       <span className="mt-1 text-[10px] leading-tight text-muted tabular-nums">
                         {p.width} × {p.height}
                       </span>
+                      <span className="sr-only">{p.usage}</span>
                     </button>
                   ))}
                   {group.orientation === "square" && (
                     <button
                       type="button"
                       aria-pressed={presetId === "custom"}
-                      aria-label="Custom size"
                       onClick={() => setPresetId("custom")}
                       className={cn(
                         "flex flex-col items-center rounded-md border px-1 pt-2 pb-1.5",

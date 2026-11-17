@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 type ButtonVariant = "primary" | "outline" | "ghost" | "danger";
@@ -282,6 +282,8 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Dialog({
   title,
   onClose,
@@ -297,10 +299,31 @@ export function Dialog({
   const ref = useRef<HTMLDivElement>(null);
   useEscape(onClose);
   useEffect(() => {
+    // Move focus into the dialog, and give it back to whatever opened the dialog afterwards.
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ref.current?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
+  /** Keep Tab inside the dialog: a modal that lets focus wander behind it cannot be used by keyboard. */
+  const trapFocus = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab" || !ref.current) return;
+    const focusable = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+    if (focusable.length === 0) return e.preventDefault();
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === ref.current)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-6" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-6" onMouseDown={onClose} onKeyDown={trapFocus}>
       <div
         ref={ref}
         role="dialog"

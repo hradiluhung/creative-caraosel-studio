@@ -10,7 +10,7 @@ import { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/lib/useMediaQuery";
-import { Button, Sheet } from "../ui/primitives";
+import { Sheet } from "../ui/primitives";
 import { importMedia } from "./actions";
 import { canvasApi } from "./canvasApi";
 import { CanvasStage } from "./CanvasStage";
@@ -24,11 +24,14 @@ import { SaveStatus, TopBar } from "./TopBar";
 import { useAutosave } from "./useAutosave";
 import { useVersionHistory } from "./useVersionHistory";
 import { loadUserTemplate } from "@/templates";
+import { describeStorageError } from "@/persistence/errors";
+import { whenIdle } from "@/lib/whenIdle";
+import { RecoveryScreen } from "./RecoveryScreen";
 import { TemplateSettingsDialog, type TemplateDetails } from "./TemplateSettingsDialog";
 import { VersionHistoryDialog } from "./VersionHistoryDialog";
 import { useSlideThumbnails } from "./useSlideThumbnails";
 
-type LoadState = { kind: "loading" } | { kind: "ready"; template: TemplateDetails | null } | { kind: "error"; message: string; details?: string[] };
+type LoadState = { kind: "loading" } | { kind: "ready"; template: TemplateDetails | null } | { kind: "error"; message: string; details?: string[]; projectId?: string | null };
 type MobileSheet = "insert" | "edit" | "layers" | "background" | null;
 
 function useEditorShortcuts(enabled: boolean) {
@@ -87,6 +90,9 @@ function Workspace({ images, template: openedTemplate }: { images: ImageStore; t
   const [dropActive, setDropActive] = useState(false);
   const [dropErrors, setDropErrors] = useState<string[]>([]);
 
+  // The zip library is only used by multi-file exports. Fetching it when idle keeps it out of the
+  // first load and still gets it into the offline cache.
+  useEffect(() => whenIdle(() => void import("jszip").catch(() => undefined)), []);
   useAutosave(images, template?.id ?? null);
   useVersionHistory(images, !template);
 
@@ -286,8 +292,9 @@ export default function EditorApp() {
         setState({ kind: "ready", template: null });
       } catch (e) {
         if (cancelled) return;
-        if (e instanceof DocumentError) setState({ kind: "error", message: e.message, details: e.issues.slice(0, 5) });
-        else setState({ kind: "error", message: e instanceof Error ? e.message : "The project could not be opened." });
+        // A project whose data is damaged can still be brought back from one of its saved versions.
+        if (e instanceof DocumentError) setState({ kind: "error", message: e.message, details: e.issues.slice(0, 5), projectId: templateId ? null : id });
+        else setState({ kind: "error", message: describeStorageError(e, "The project could not be opened.") });
       }
     })();
     return () => {
@@ -300,23 +307,6 @@ export default function EditorApp() {
   if (state.kind === "loading") {
     return <div className="flex h-dvh items-center justify-center text-muted">Opening project…</div>;
   }
-  if (state.kind === "error") {
-    return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="font-display text-2xl font-bold">Could not open this project</p>
-        <p role="alert" className="max-w-md text-muted">
-          {state.message}
-        </p>
-        {state.details && (
-          <ul className="max-w-md text-left font-mono text-[11px] text-muted">
-            {state.details.map((d) => (
-              <li key={d}>{d}</li>
-            ))}
-          </ul>
-        )}
-        <Button onClick={() => (window.location.href = "/")}>Back to projects</Button>
-      </div>
-    );
-  }
+  if (state.kind === "error") return <RecoveryScreen projectId={state.projectId ?? null} message={state.message} details={state.details} />;
   return <Workspace images={images} template={state.template} />;
 }

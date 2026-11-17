@@ -10,7 +10,7 @@
  * Reading never trusts the file: the document goes through parseProject, asset types are checked
  * against the bytes, and sizes and counts are limited.
  */
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import { DocumentError, parseProject } from "@/document/migrations";
 import { isAudioAsset, isVideoAsset, type AssetRef, type Project } from "@/document/schema";
 import { sniffImageType } from "@/persistence/assets";
@@ -24,6 +24,9 @@ export const MAX_TEMPLATE_FILE_BYTES = 500 * 1024 * 1024;
 export const MAX_TEMPLATE_ASSETS = 200;
 const MAX_MANIFEST_BYTES = 20 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
+
+/** The zip library is only needed for template files, so it is fetched when one is exported or imported. */
+const loadZip = async () => (await import("jszip")).default;
 
 export class TemplateFileError extends Error {
   constructor(message: string) {
@@ -61,7 +64,7 @@ export async function packTemplate(
   template: { name: string; category: string; description?: string; doc: Project; thumbnail: Blob | null },
   readAsset: AssetReader,
 ): Promise<Blob> {
-  const zip = new JSZip();
+  const zip = new (await loadZip())();
   const assets = usedAssets(template.doc);
   for (const ref of assets) {
     const stored = await readAsset(ref.id);
@@ -98,7 +101,7 @@ export async function unpackTemplate(file: Blob): Promise<TemplateFileContent> {
   if (file.size > MAX_TEMPLATE_FILE_BYTES) throw new TemplateFileError("This template file is larger than 500 MB.");
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(await file.arrayBuffer());
+    zip = await (await loadZip()).loadAsync(await file.arrayBuffer());
   } catch {
     throw new TemplateFileError("This is not a template file.");
   }

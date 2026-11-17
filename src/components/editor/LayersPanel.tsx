@@ -21,7 +21,7 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
 
   return (
     <li
-      role="option"
+      // A plain list item: each row holds its own buttons, which an "option" may not contain.
       draggable={draft === null}
       onDragStart={(e) => {
         e.dataTransfer.setData("application/x-ccs-layer", el.id);
@@ -52,7 +52,7 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
         });
       }}
       onClick={(e) => (e.shiftKey || e.metaKey || e.ctrlKey ? s().toggleSelect(el.id) : s().select([el.id]))}
-      aria-selected={selected}
+      aria-current={selected ? "true" : undefined}
       className={cn(
         "group flex h-9 items-center gap-1.5 border-y border-transparent pr-1 pl-3 select-none",
         selected ? "bg-sunken" : "hover:bg-sunken/60",
@@ -122,7 +122,7 @@ export function LayersPanel() {
   // Top-most layer first, like every design tool.
   const rows = elements.map((el, index) => ({ el, index })).reverse();
   return (
-    <ul role="listbox" aria-label="Layers" aria-multiselectable className="py-1">
+    <ul aria-label="Layers" className="py-1">
       {rows.map(({ el, index }) => (
         <LayerRow key={el.id} el={el} index={index} count={elements.length} />
       ))}

@@ -250,14 +250,14 @@ export function TemplateLibrary() {
                 <button type="button" onClick={() => setPreview(t)} aria-label={`Preview template ${t.name}`} className="block w-full text-left">
                   <div className="flex aspect-[4/5] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-3 transition-colors group-hover:border-line-strong">
                     {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview */}
-                    {src ? <img src={src} alt="" className="max-h-full max-w-full object-contain shadow-md" /> : <span className="text-xs text-muted">Rendering…</span>}
+                    {src ? <img src={src} alt="" className="max-h-full max-w-full object-contain shadow-md" /> : <span className="text-xs text-muted" aria-hidden>…</span>}
                   </div>
                   <h3 className="mt-2.5 truncate pr-16 text-[13px] font-medium">{t.name}</h3>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {t.category} · {t.doc.slides.length} slides · {aspectRatioLabel(t.doc.width, t.doc.height)}
-                    {recents.includes(t.id) && " · Recent"}
-                  </p>
                 </button>
+                <p className="mt-0.5 text-xs text-muted">
+                  {t.category} · {t.doc.slides.length} slides · {aspectRatioLabel(t.doc.width, t.doc.height)}
+                  {recents.includes(t.id) && " · Recent"}
+                </p>
                 <div className="absolute right-0 bottom-3.5 flex">
                   {t.source === "user" && (
                     <IconButton label={`Delete template ${t.name}`} onClick={() => void deleteUserTemplate(t.id).then(refresh)}>

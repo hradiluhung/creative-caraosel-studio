@@ -1,6 +1,7 @@
 "use client";
 
 import { MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   deleteProject,
@@ -12,12 +13,17 @@ import {
 } from "@/persistence/db";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 import { Button, Dialog, FloatingMenu, IconButton, TextInput } from "../ui/primitives";
-import { saveProjectAsTemplate } from "@/templates";
 import { cn } from "@/lib/cn";
-import { AssetLibrary } from "./AssetLibrary";
-import { BrandKits } from "./BrandKits";
+import { describeStorageError } from "@/persistence/errors";
+import { whenIdle } from "@/lib/whenIdle";
 import { NewProjectDialog } from "./NewProjectDialog";
-import { TemplateLibrary } from "./TemplateLibrary";
+// The other tabs bring the renderer, the template data and the library with them:
+// they are fetched when their tab is opened, so the project list appears sooner.
+const loadTabs = () => [import("./AssetLibrary"), import("./BrandKits"), import("./TemplateLibrary")];
+const TabLoading = () => <p className="py-16 text-center text-muted">Loading…</p>;
+const AssetLibrary = dynamic(() => import("./AssetLibrary").then((m) => m.AssetLibrary), { ssr: false, loading: TabLoading });
+const BrandKits = dynamic(() => import("./BrandKits").then((m) => m.BrandKits), { ssr: false, loading: TabLoading });
+const TemplateLibrary = dynamic(() => import("./TemplateLibrary").then((m) => m.TemplateLibrary), { ssr: false, loading: TabLoading });
 
 type Tab = "projects" | "templates" | "assets" | "brand";
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -40,7 +46,7 @@ function ProjectCard({ meta, onMenu }: { meta: ProjectMeta; onMenu: (meta: Proje
   const cover = useObjectUrl(meta.thumbnail);
   return (
     <article className="group relative">
-      <a href={`/editor?id=${encodeURIComponent(meta.id)}`} className="block" aria-label={`Open ${meta.name}`}>
+      <a href={`/editor?id=${encodeURIComponent(meta.id)}`} className="block">
         <div className="flex aspect-[4/5] items-center justify-center overflow-hidden rounded-md border border-line bg-sunken p-4 transition-colors group-hover:border-line-strong">
           {cover ? (
             // eslint-disable-next-line @next/next/no-img-element -- local blob preview, not a remote image
@@ -81,6 +87,9 @@ export function Dashboard() {
   const [renaming, setRenaming] = useState<{ meta: ProjectMeta; name: string } | null>(null);
   const [deleting, setDeleting] = useState<ProjectMeta | null>(null);
   const [tab, setTab] = useState<Tab>("projects");
+  // Fetch the other tabs once the page is idle: opening them is then instant, and the service
+  // worker has them cached, so they also open offline.
+  useEffect(() => whenIdle(() => void Promise.all(loadTabs()).catch(() => undefined)), []);
   useEffect(() => {
     // Links such as "Back to templates" open a specific tab.
     const wanted = new URLSearchParams(window.location.search).get("tab");
@@ -97,11 +106,7 @@ export function Dashboard() {
           setError(null);
         },
         (e: unknown) => {
-          setError(
-            e instanceof Error
-              ? `Local storage is unavailable: ${e.message}`
-              : "Local storage is unavailable. Private browsing can block IndexedDB.",
-          );
+          setError(describeStorageError(e, "Storage is not available in this browser window."));
           setProjects([]);
         },
       ),
@@ -121,7 +126,7 @@ export function Dashboard() {
     try {
       await action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setError(describeStorageError(e, "Something went wrong."));
     }
     await refresh();
   };
@@ -218,7 +223,7 @@ export function Dashboard() {
               label: "Save as template",
               onSelect: () =>
                 run(async () => {
-                  await saveProjectAsTemplate(menu.meta.id, menu.meta.name);
+                  await (await import("@/templates")).saveProjectAsTemplate(menu.meta.id, menu.meta.name);
                   setNotice(`“${menu.meta.name}” was saved to Templates → My templates.`);
                 }),
             },

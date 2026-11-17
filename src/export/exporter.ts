@@ -4,7 +4,6 @@
  * video slides become one video file each (src/export/video.ts). Slides are never merged
  * into one video: the result is always one file per slide, in slide order.
  */
-import JSZip from "jszip";
 import Konva from "konva";
 import { getExportFrames, getSurface, type ExportFrame } from "@/document/geometry";
 import { usedAssetIds } from "@/document/operations";
@@ -208,6 +207,8 @@ export async function exportSlides(project: Project, res: ImageStore, opts: Expo
 }
 
 export async function packageZip(files: ExportedFile[], signal?: AbortSignal): Promise<Blob> {
+  // Only a multi-file export needs the zip library: fetch it then, not with the editor.
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const f of files) zip.file(f.name, f.blob);
   // Images are already compressed, so STORE keeps packaging fast.

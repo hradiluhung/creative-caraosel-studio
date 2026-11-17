@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "node tests/e2e.mjs && node tests/e2e-phase2.mjs && node tests/e2e-phase3.mjs && node tests/e2e-phase4.mjs && node tests/e2e-snap.mjs && node tests/e2e-phase4-tools.mjs"
+    "test:e2e": "node tests/e2e.mjs && node tests/e2e-phase2.mjs && node tests/e2e-phase3.mjs && node tests/e2e-phase4.mjs && node tests/e2e-snap.mjs && node tests/e2e-phase4-tools.mjs && node tests/e2e-phase5.mjs"
   },
   "dependencies": {
     "@fontsource/abril-fatface": "^5.3.0",
@@ -57,6 +57,7 @@
     "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "axe-core": "^4.14.1",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "fake-indexeddb": "^6.2.8",
