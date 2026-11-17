@@ -55,13 +55,11 @@ export function TopBar({
   const s = () => useEditorStore.getState();
 
   return (
-    <header className="pt-safe px-safe border-b border-line bg-panel">
-      {/*
-        iOS 26 Safari blurs whatever sits under the status bar unless an opaque element is fixed to
-        the top of the page; it then fills the status bar with that element's colour instead. This
-        strip is exactly as tall as the status bar area (0 where there is none) and matches the bar.
-      */}
-      <div aria-hidden data-testid="status-bar-backing" className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[env(safe-area-inset-top)] bg-panel" />
+    // Recent iOS blurs whatever sits under the status bar unless a solid element is stuck to the top
+    // of the page (sticky or fixed, within 4 px of the top, at least 6 px tall, most of the width);
+    // it then fills the status bar with that element's colour. The top bar itself is that element.
+    // It stays below dialogs (z-50) so they still cover it.
+    <header data-testid="editor-top-bar" className="pt-safe px-safe sticky top-0 z-40 border-b border-line bg-panel">
       <div className="flex h-12 items-center gap-1 px-2">
         <a href={onTemplateSettings ? "/?tab=templates" : "/"} aria-label={onTemplateSettings ? "Back to templates" : "Back to projects"} title={onTemplateSettings ? "Back to templates" : "Back to projects"} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] hover:bg-sunken">
           <ArrowLeft className="h-4 w-4" />
