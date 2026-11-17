@@ -51,7 +51,7 @@ function LayerRow({ el, index, count }: { el: DesignElement; index: number; coun
           return moveElementToIndex(doc, activeSurfaceId, id, to);
         });
       }}
-      onClick={(e) => (e.shiftKey || e.metaKey || e.ctrlKey ? s().toggleSelect(el.id) : s().select([el.id]))}
+      onClick={(e) => (e.shiftKey || e.metaKey || e.ctrlKey || s().multiSelect ? s().toggleSelect(el.id) : s().select([el.id]))}
       aria-current={selected ? "true" : undefined}
       className={cn(
         "group flex h-9 items-center gap-1.5 border-y border-transparent pr-1 pl-3 select-none",

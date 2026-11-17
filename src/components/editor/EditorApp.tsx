@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, Maximize, PaintBucket, Plus, SlidersHorizontal } from "lucide-react";
+import { Layers, ListChecks, Maximize, PaintBucket, Plus, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DocumentError } from "@/document/migrations";
 import { loadCustomFonts } from "@/persistence/customFonts";
@@ -72,6 +72,28 @@ function useEditorShortcuts(enabled: boolean) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [enabled]);
+}
+
+/** Phone layout: lets taps add objects to the selection, since a touch screen has no Shift key. */
+function MultiSelectToggle() {
+  const on = useEditorStore((s) => s.multiSelect);
+  const count = useEditorStore((s) => s.selection.length);
+  const toggle = () => useEditorStore.getState().setMultiSelect(!on);
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      data-testid="multi-select"
+      onClick={toggle}
+      className={cn(
+        "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-sm",
+        on ? "border-ink bg-ink text-bg" : "border-line bg-panel/90 text-ink backdrop-blur",
+      )}
+    >
+      <ListChecks className="h-4 w-4" />
+      {on ? `Multi-select (${count})` : "Select multiple"}
+    </button>
+  );
 }
 
 function Workspace({ images, template: openedTemplate }: { images: ImageStore; template: TemplateDetails | null }) {
@@ -155,14 +177,17 @@ function Workspace({ images, template: openedTemplate }: { images: ImageStore; t
           <span className="rounded-full bg-panel/85 px-2 py-0.5 backdrop-blur">
             <SaveStatus />
           </span>
-          <button
-            type="button"
-            aria-label="Fit canvas to screen"
-            onClick={() => canvasApi.fit()}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-panel/90 shadow-sm backdrop-blur"
-          >
-            <Maximize className="h-4 w-4" />
-          </button>
+          <span className="flex items-center gap-2">
+            <MultiSelectToggle />
+            <button
+              type="button"
+              aria-label="Fit canvas to screen"
+              onClick={() => canvasApi.fit()}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-panel/90 shadow-sm backdrop-blur"
+            >
+              <Maximize className="h-4 w-4" />
+            </button>
+          </span>
         </div>
       )}
     </div>

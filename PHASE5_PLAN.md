@@ -91,6 +91,24 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
   ("Deploying"). The security headers come from `next.config.ts`, so they need a host that runs
   Next (for example Vercel) or the same headers configured on a static host.
 
+### Phone fixes after the first iPhone test (2026-11-17)
+
+- **Blur under the iOS status bar.** iOS 26 Safari blurs page content under the status bar unless
+  an opaque element is fixed to the top of the page. The editor now has a fixed strip exactly as
+  tall as the status bar area, in the top bar's colour. **Only checked in Chrome; it needs a test
+  on the iPhone.**
+- **Selecting several objects by touch.** "Select multiple" on the canvas (phone layout): while it
+  is on, taps on the canvas and in the layers list add or remove objects, like Shift on a desktop.
+- **Sliders under number fields on touch screens** (size, rotation, font size, spacing, stroke,
+  corner radius, border, shadow, gradient angle, layout gap), so values can be changed without the
+  keyboard covering the canvas. A whole slider drag is one undo step. Position fields have none
+  (objects are dragged), and with a mouse the panel is unchanged.
+- **Version dates.** A version was dated when its thumbnail finished rendering, not when its state
+  was taken, so an automatic version could be listed as newer than a manual one saved meanwhile.
+  It is dated at capture now. Found through an intermittent failure of the recovery test.
+- Verified: `tests/e2e-mobile.mjs` (21 checks, phone emulation in Chrome), recovery suite 5 runs in
+  a row at 35/35, all other suites unchanged.
+
 ## Known limits of Phase 5
 
 - Every automated check ran in desktop Chrome on Linux. Nothing here was verified on iOS, Safari

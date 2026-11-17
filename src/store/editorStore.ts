@@ -56,6 +56,9 @@ export interface EditorState {
 
   select(ids: string[]): void;
   toggleSelect(id: string): void;
+  /** Touch screens have no Shift key: while this is on, a tap adds or removes an object from the selection. */
+  multiSelect: boolean;
+  setMultiSelect(on: boolean): void;
   setActiveSurface(id: string): void;
   setFocusSlide(index: number): void;
   setZoom(zoom: number): void;
@@ -194,6 +197,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const cur = get().selection;
     if (cur.length === ids.length && cur.every((id, i) => id === ids[i])) return;
     set({ selection: ids });
+  },
+  multiSelect: false,
+  setMultiSelect(on) {
+    set({ multiSelect: on });
   },
   toggleSelect(id) {
     const cur = get().selection;

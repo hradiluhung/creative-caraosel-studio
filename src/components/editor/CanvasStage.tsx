@@ -392,7 +392,7 @@ export function CanvasStage({ images }: { images: ImageStore }) {
       const node = elementNodeOf(e.target);
       if (!node) return s.select([]);
       const evt = e.evt as MouseEvent;
-      if (evt.shiftKey || evt.metaKey || evt.ctrlKey) s.toggleSelect(node.id());
+      if (evt.shiftKey || evt.metaKey || evt.ctrlKey || s.multiSelect) s.toggleSelect(node.id());
       else s.select([node.id()]);
     });
 

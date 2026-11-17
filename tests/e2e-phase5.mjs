@@ -226,6 +226,9 @@ try {
   ok("Retry saves at once", (await elementCount()) === 4);
 
   // ---------- Recovery: a project whose data is damaged ----------
+  // Leave the editor first: while it is open, its pending autosave could write the healthy
+  // document back over the damaged one and the screen under test would never appear.
+  await page.goto(BASE, { waitUntil: "networkidle0" });
   await corrupt(id);
   await page.goto(`${BASE}/editor?id=${id}`, { waitUntil: "networkidle0" });
   await page.waitForSelector('[data-testid="recovery-version"]');

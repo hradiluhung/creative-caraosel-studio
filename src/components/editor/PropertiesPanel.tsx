@@ -112,7 +112,7 @@ function TextProps({ el }: { el: TextElement }) {
             onChange={(w) => void patch({ fontWeight: Number(w) })}
             options={(font?.weights.length ? font.weights : [weight]).map((w) => ({ value: String(w), label: WEIGHT_NAMES[w] ?? String(w) }))}
           />
-          <NumberField label="Font size" prefix="Aa" min={4} max={2000} value={el.fontSize} decimals={1} onChange={(fontSize) => void patch({ fontSize })} />
+          <NumberField label="Font size" prefix="Aa" min={4} max={2000} slider={{ min: 8, max: 400 }} value={el.fontSize} decimals={1} onChange={(fontSize, c) => void patch({ fontSize }, c)} />
         </Row>
         <div className="flex items-center gap-2">
           <div className="flex-1">
@@ -144,8 +144,8 @@ function TextProps({ el }: { el: TextElement }) {
         />
         <ColorControl label="Text color" value={el.fill} onChange={(fill) => void patch({ fill }, "fill")} />
         <Row>
-          <NumberField label="Line height" prefix="↕" min={0.5} max={4} step={0.05} decimals={2} value={el.lineHeight} onChange={(lineHeight) => void patch({ lineHeight })} />
-          <NumberField label="Letter spacing" prefix="↔" min={-50} max={400} step={0.5} decimals={1} value={el.letterSpacing} onChange={(letterSpacing) => void patch({ letterSpacing })} />
+          <NumberField label="Line height" prefix="↕" min={0.5} max={4} step={0.05} decimals={2} slider={{ min: 0.5, max: 3 }} value={el.lineHeight} onChange={(lineHeight, c) => void patch({ lineHeight }, c)} />
+          <NumberField label="Letter spacing" prefix="↔" min={-50} max={400} step={0.5} decimals={1} slider={{ min: -20, max: 100 }} value={el.letterSpacing} onChange={(letterSpacing, c) => void patch({ letterSpacing }, c)} />
         </Row>
       </Section>
       <Section title="Text effects">
@@ -154,7 +154,7 @@ function TextProps({ el }: { el: TextElement }) {
           <>
             <ColorControl label="Outline color" value={el.strokeColor} onChange={(strokeColor) => void patch({ strokeColor }, "stroke")} />
             <div className="w-1/2 pr-1">
-              <NumberField label="Outline width" prefix="▭" min={0} max={200} decimals={1} value={el.strokeWidth} onChange={(strokeWidth) => void patch({ strokeWidth })} />
+              <NumberField label="Outline width" prefix="▭" min={0} max={200} decimals={1} slider={{ min: 0, max: 50 }} value={el.strokeWidth} onChange={(strokeWidth, c) => void patch({ strokeWidth }, c)} />
             </div>
           </>
         )}
@@ -167,8 +167,8 @@ function TextProps({ el }: { el: TextElement }) {
           <>
             <ColorControl label="Box color" value={el.background.color} onChange={(color) => void patch({ background: { ...el.background!, color } }, "textbg")} />
             <Row>
-              <NumberField label="Box padding" prefix="⇔" min={0} max={400} value={el.background.padding} onChange={(padding) => void patch({ background: { ...el.background!, padding } })} />
-              <NumberField label="Box corner radius" prefix="◜" min={0} max={400} value={el.background.radius} onChange={(radius) => void patch({ background: { ...el.background!, radius } })} />
+              <NumberField label="Box padding" prefix="⇔" min={0} max={400} slider={{ min: 0, max: 200 }} value={el.background.padding} onChange={(padding, c) => void patch({ background: { ...el.background!, padding } }, c)} />
+              <NumberField label="Box corner radius" prefix="◜" min={0} max={400} slider={{ min: 0, max: 200 }} value={el.background.radius} onChange={(radius, c) => void patch({ background: { ...el.background!, radius } }, c)} />
             </Row>
           </>
         )}
@@ -185,12 +185,12 @@ function ShapeProps({ el }: { el: ShapeElement }) {
       {!isLine && <ColorControl label="Fill color" value={el.fill} onChange={(fill) => set({ fill }, "fill")} />}
       <ColorControl label="Stroke color" value={el.stroke} onChange={(stroke) => set({ stroke }, "stroke")} />
       <Row>
-        <NumberField label="Stroke width" prefix="▭" min={isLine ? 1 : 0} max={200} value={el.strokeWidth} onChange={(strokeWidth) => set({ strokeWidth })} />
+        <NumberField label="Stroke width" prefix="▭" min={isLine ? 1 : 0} max={200} slider={{ min: isLine ? 1 : 0, max: 100 }} value={el.strokeWidth} onChange={(strokeWidth, c) => set({ strokeWidth }, c)} />
         {el.shape === "rect" && (
-          <NumberField label="Corner radius" prefix="◜" min={0} max={2000} value={el.cornerRadius} onChange={(cornerRadius) => set({ cornerRadius })} />
+          <NumberField label="Corner radius" prefix="◜" min={0} max={2000} slider={{ min: 0, max: Math.ceil(Math.min(el.width, el.height) / 2) }} value={el.cornerRadius} onChange={(cornerRadius, c) => set({ cornerRadius }, c)} />
         )}
         {(el.shape === "polygon" || el.shape === "star") && (
-          <NumberField label={el.shape === "star" ? "Points" : "Sides"} prefix="#" min={3} max={24} value={el.sides} onChange={(sides) => set({ sides: Math.round(sides) })} />
+          <NumberField label={el.shape === "star" ? "Points" : "Sides"} prefix="#" min={3} max={24} slider={{ min: 3, max: 24 }} value={el.sides} onChange={(sides, c) => set({ sides: Math.round(sides) }, c)} />
         )}
       </Row>
     </Section>
@@ -265,14 +265,14 @@ function FrameStyleControls({ el }: { el: ImageElement | VideoElement }) {
       <Row>
         <Select label="Mask shape" value={el.mask} onChange={(mask) => set({ mask })} options={IMAGE_MASKS.map((m) => ({ value: m, label: m === "rect" ? "Rectangle" : title(m) }))} />
         {el.mask === "rect" ? (
-          <NumberField label="Corner radius" prefix="◜" min={0} max={4000} value={el.cornerRadius} onChange={(cornerRadius) => set({ cornerRadius })} />
+          <NumberField label="Corner radius" prefix="◜" min={0} max={4000} slider={{ min: 0, max: Math.ceil(Math.min(el.width, el.height) / 2) }} value={el.cornerRadius} onChange={(cornerRadius, c) => set({ cornerRadius }, c)} />
         ) : (
           <span />
         )}
       </Row>
       <div className="flex items-center gap-2">
         <div className="flex-1">
-          <NumberField label="Border width" prefix="▭" min={0} max={400} value={el.borderWidth} onChange={(borderWidth) => set({ borderWidth })} />
+          <NumberField label="Border width" prefix="▭" min={0} max={400} slider={{ min: 0, max: 100 }} value={el.borderWidth} onChange={(borderWidth, c) => set({ borderWidth }, c)} />
         </div>
         <IconButton label="Flip horizontal" active={el.flipX} onClick={() => set({ flipX: !el.flipX })}>
           <FlipHorizontal2 />
@@ -559,12 +559,12 @@ function EffectsProps({ el }: { el: DesignElement }) {
             <>
               <ColorControl label="Shadow color" value={sh.color} onChange={(color) => set({ shadow: { ...sh, color } }, "shadow")} />
               <Row>
-                <NumberField label="Shadow blur" prefix="◌" min={0} max={400} value={sh.blur} onChange={(blur) => set({ shadow: { ...sh, blur } })} />
-                <NumberField label="Shadow opacity" prefix="%" min={0} max={100} value={Math.round(sh.opacity * 100)} onChange={(o) => set({ shadow: { ...sh, opacity: o / 100 } })} />
+                <NumberField label="Shadow blur" prefix="◌" min={0} max={400} slider={{ min: 0, max: 200 }} value={sh.blur} onChange={(blur, c) => set({ shadow: { ...sh, blur } }, c)} />
+                <NumberField label="Shadow opacity" prefix="%" min={0} max={100} slider={{ min: 0, max: 100 }} value={Math.round(sh.opacity * 100)} onChange={(o, c) => set({ shadow: { ...sh, opacity: o / 100 } }, c)} />
               </Row>
               <Row>
-                <NumberField label="Shadow offset X" prefix="X" min={-500} max={500} value={sh.offsetX} onChange={(offsetX) => set({ shadow: { ...sh, offsetX } })} />
-                <NumberField label="Shadow offset Y" prefix="Y" min={-500} max={500} value={sh.offsetY} onChange={(offsetY) => set({ shadow: { ...sh, offsetY } })} />
+                <NumberField label="Shadow offset X" prefix="X" min={-500} max={500} slider={{ min: -200, max: 200 }} value={sh.offsetX} onChange={(offsetX, c) => set({ shadow: { ...sh, offsetX } }, c)} />
+                <NumberField label="Shadow offset Y" prefix="Y" min={-500} max={500} slider={{ min: -200, max: 200 }} value={sh.offsetY} onChange={(offsetY, c) => set({ shadow: { ...sh, offsetY } }, c)} />
               </Row>
             </>
           )}
@@ -631,17 +631,17 @@ export function PropertiesPanel() {
               <NumberField label="Y position" prefix="Y" value={single.y} onChange={(y) => updateSelected({ y })} />
             </Row>
             <Row>
-              <NumberField label="Width" prefix="W" min={4} max={30000} value={single.width} onChange={(width) => updateSelected(single.type === "text" ? ({ width, height: measureTextHeight({ ...single, width }) } as Partial<DesignElement>) : { width })} />
+              <NumberField label="Width" prefix="W" min={4} max={30000} slider={{ min: 4, max: (project?.width ?? 1080) * 2 }} value={single.width} onChange={(width, c) => updateSelected(single.type === "text" ? ({ width, height: measureTextHeight({ ...single, width }) } as Partial<DesignElement>) : { width }, c)} />
               {single.type === "text" ? (
                 <div className="flex h-8 items-center rounded-[5px] border border-dashed border-line px-2 text-xs text-muted" title="Text height follows its content">
                   H auto
                 </div>
               ) : (
-                <NumberField label="Height" prefix="H" min={4} max={30000} value={single.height} onChange={(height) => updateSelected({ height })} />
+                <NumberField label="Height" prefix="H" min={4} max={30000} slider={{ min: 4, max: (project?.height ?? 1350) * 2 }} value={single.height} onChange={(height, c) => updateSelected({ height }, c)} />
               )}
             </Row>
             <Row>
-              <NumberField label="Rotation" prefix="∠" min={-360} max={360} decimals={1} value={single.rotation} onChange={(rotation) => updateSelected({ rotation: ((rotation % 360) + 360) % 360 })} />
+              <NumberField label="Rotation" prefix="∠" min={-360} max={360} decimals={1} slider={{ min: 0, max: 360 }} value={single.rotation} onChange={(rotation, c) => updateSelected({ rotation: ((rotation % 360) + 360) % 360 }, c)} />
             </Row>
           </>
         )}

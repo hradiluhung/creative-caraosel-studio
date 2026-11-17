@@ -14,13 +14,16 @@ const CHECK_EVERY_MS = 60_000;
 
 /** Save a version of the given state, with a small picture of its first slide. */
 export async function captureVersion(project: Project, kind: VersionKind, images: ImageStore, name?: string): Promise<VersionSummary> {
+  // The version holds the state of this moment, so it is dated now and not when the picture is
+  // done: otherwise a version saved while the picture renders would be listed as older than it.
+  const capturedAt = new Date();
   let thumbnail: Blob | null = null;
   try {
     thumbnail = await renderThumbnail(project, getExportFrames(project)[0], images, 320);
   } catch {
     thumbnail = null; // a missing picture must never cost the version itself
   }
-  return saveVersion(project, kind, { name, thumbnail });
+  return saveVersion(project, kind, { name, thumbnail, now: capturedAt });
 }
 
 /**

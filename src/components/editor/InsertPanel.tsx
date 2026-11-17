@@ -117,7 +117,7 @@ export function BackgroundControls() {
             </Button>
             {bg.type === "linear" && (
               <div className="w-24">
-                <NumberField label="Gradient angle" prefix="∠" min={0} max={360} value={bg.angle} onChange={(angle) => set({ ...bg, angle }, "angle")} />
+                <NumberField label="Gradient angle" prefix="∠" min={0} max={360} slider={{ min: 0, max: 360 }} value={bg.angle} onChange={(angle, c) => set({ ...bg, angle }, c ?? "angle")} />
               </div>
             )}
           </div>
@@ -258,7 +258,7 @@ function LayoutsSection() {
     <Section title="Layouts">
       <div className="grid grid-cols-2 gap-2">
         <NumberField label="Frames" prefix="#" value={shown} onChange={(v) => setCount(clampLayoutCount(v))} min={MIN_LAYOUT_COUNT} max={MAX_LAYOUT_COUNT} disabled={rearrange} />
-        <NumberField label="Gap" prefix="↔" value={gap} onChange={setGap} min={0} max={200} />
+        <NumberField label="Gap" prefix="↔" value={gap} onChange={(v) => setGap(v)} min={0} max={200} slider={{ min: 0, max: 200 }} />
       </div>
       <div className="grid grid-cols-7 gap-1 md:grid-cols-4" data-testid="layout-options">
         {LAYOUT_KINDS.map((kind) => (

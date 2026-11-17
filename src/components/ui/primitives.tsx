@@ -117,16 +117,24 @@ export function NumberField({
   decimals = 0,
   prefix,
   disabled = false,
+  slider,
 }: {
   label: string;
   value: number;
-  onChange: (value: number) => void;
+  /** `coalesce` is set while a slider is dragged, so the whole drag can become one undo step. */
+  onChange: (value: number, coalesce?: string) => void;
   min?: number;
   max?: number;
   step?: number;
   decimals?: number;
   prefix?: string;
   disabled?: boolean;
+  /**
+   * Adds a slider under the field on touch screens, where typing a number brings up a keyboard
+   * that hides the canvas. Its range can be narrower than what may be typed; it widens to include
+   * the current value.
+   */
+  slider?: { min: number; max: number; step?: number };
 }) {
   const format = (n: number) => String(Number(n.toFixed(decimals)));
   const [draft, setDraft] = useState<string | null>(null);
@@ -137,34 +145,54 @@ export function NumberField({
     const clamped = Math.min(max, Math.max(min, n));
     if (clamped !== value) onChange(clamped);
   };
+  const range = slider && { min: Math.min(slider.min, value), max: Math.max(slider.max, value), step: slider.step ?? step };
   return (
-    <div className="relative min-w-0">
-      {prefix && (
-        <span className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-[11px] text-muted">{prefix}</span>
+    <div className="min-w-0">
+      <div className="relative">
+        {prefix && (
+          <span className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-[11px] text-muted">{prefix}</span>
+        )}
+        <input
+          aria-label={label}
+          title={label}
+          disabled={disabled}
+          inputMode="decimal"
+          value={draft ?? format(value)}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => draft !== null && commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setDraft(null);
+              (e.target as HTMLInputElement).blur();
+            }
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              const delta = (e.key === "ArrowUp" ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
+              commit(String(value + delta));
+            }
+          }}
+          className={cn(inputClass, "tabular-nums", prefix && "pl-6")}
+        />
+      </div>
+      {range && (
+        <input
+          type="range"
+          aria-label={`${label} slider`}
+          data-testid="number-slider"
+          disabled={disabled}
+          min={range.min}
+          max={range.max}
+          step={range.step}
+          value={value}
+          onChange={(e) => {
+            const n = Math.min(max, Math.max(min, Number(e.target.value)));
+            if (Number.isFinite(n) && n !== value) onChange(n, `slider:${label}`);
+          }}
+          className="mt-1 hidden h-7 w-full [@media(pointer:coarse)]:block"
+        />
       )}
-      <input
-        aria-label={label}
-        title={label}
-        disabled={disabled}
-        inputMode="decimal"
-        value={draft ?? format(value)}
-        onFocus={(e) => e.target.select()}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={(e) => draft !== null && commit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          if (e.key === "Escape") {
-            setDraft(null);
-            (e.target as HTMLInputElement).blur();
-          }
-          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-            e.preventDefault();
-            const delta = (e.key === "ArrowUp" ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
-            commit(String(value + delta));
-          }
-        }}
-        className={cn(inputClass, "tabular-nums", prefix && "pl-6")}
-      />
     </div>
   );
 }
