@@ -1,5 +1,5 @@
 /*
- * Offline shell for Creative Carousel Studio.
+ * Offline shell for Karosel.
  * - install:  precache both app pages plus every script, style and font they reference
  * - navigate: network first, cached page as fallback (so updates arrive when online)
  * - /_next/static: cache first (file names are content hashed, so they never change)

@@ -1,4 +1,9 @@
-# Creative Carousel Studio
+# Karosel
+
+Free Instagram carousel maker: https://karosel.netlify.app
+(Formerly "Creative Carousel Studio". Internal names such as the IndexedDB database
+`creative-carousel-studio` keep the old name on purpose: renaming them would hide existing
+projects on every device.)
 
 A browser-based studio for designing Instagram carousels: independent slides or one seamless
 panorama that is sliced on export. Works on desktop and phones, installable as a PWA, and keeps

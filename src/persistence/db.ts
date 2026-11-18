@@ -98,6 +98,7 @@ interface Schema extends DBSchema {
   brandKits: { key: string; value: BrandKit }
 }
 
+// Kept from the app's first name (now Karosel): renaming the database would hide every saved project.
 const DB_NAME = 'creative-carousel-studio'
 const DB_VERSION = 3
 

@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Creative Carousel Studio",
-    short_name: "Carousel Studio",
-    description: "Design seamless and multi-slide Instagram carousels.",
+    name: "Karosel",
+    short_name: "Karosel",
+    description: "Free carousel maker for Instagram: photo journal templates, photos and video, right in your browser.",
     id: "/",
     start_url: "/",
     scope: "/",

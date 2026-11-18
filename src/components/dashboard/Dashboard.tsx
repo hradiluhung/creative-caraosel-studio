@@ -220,7 +220,7 @@ export function Dashboard() {
     <div className="pt-safe px-safe min-h-full">
       <header className="mx-auto flex max-w-6xl items-end justify-between gap-4 px-5 pt-6 pb-4 sm:px-8 sm:pt-10 sm:pb-6">
         <div className="min-w-0">
-          <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Creative Carousel Studio</p>
+          <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">Karosel</p>
           <h1 className="mt-1 truncate font-display text-[28px] leading-none font-bold tracking-tight sm:text-[34px]">{TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
         {/* Project creation lives on the Projects page only (phones use the floating button there). */}

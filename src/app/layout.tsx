@@ -3,10 +3,21 @@ import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistratio
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Creative Carousel Studio",
-  description: "Design seamless and multi-slide Instagram carousels in the browser.",
-  applicationName: "Carousel Studio",
-  appleWebApp: { capable: true, title: "Carousel Studio", statusBarStyle: "default" },
+  metadataBase: new URL("https://karosel.netlify.app"),
+  title: "Karosel",
+  description: "Free carousel maker for Instagram: photo journal templates, photos and video, right in your browser.",
+  applicationName: "Karosel",
+  appleWebApp: { capable: true, title: "Karosel", statusBarStyle: "default" },
+  // What a shared link shows on social media and in chats.
+  openGraph: {
+    type: "website",
+    siteName: "Karosel",
+    title: "Karosel: free Instagram carousel maker",
+    description: "Photo journal templates, seamless slides, photos and video. Free, works in your browser and on your phone.",
+    url: "/",
+    images: [{ url: "/icons/icon-512.png", width: 512, height: 512, alt: "Karosel" }],
+  },
+  twitter: { card: "summary", title: "Karosel: free Instagram carousel maker", images: ["/icons/icon-512.png"] },
   icons: { apple: "/icons/apple-touch-icon.png" },
   formatDetection: { telephone: false },
 };
