@@ -181,6 +181,9 @@ compatibility, error handling, recovery testing, accessibility, deployment, docu
   arrangements (contact sheet, diptych, big numerals, magazine cover, film strip, scrapbook, index,
   postcards, panorama, mosaic with palette, arches, one line a day) and two new formats (Square
   Notes 1:1, Story Journal 9:16), all in the same paper, ink and serif direction.
+- **Support link.** The export success screen ends with one quiet card linking to the Trakteer page
+  (`src/lib/support.ts`; an empty `SUPPORT_URL` hides it). A plain link opened in a new tab, no
+  widget, so the Content Security Policy is unchanged and nothing loads from another site.
 - **New project** is only offered on the Projects page (header button on wider screens, floating
   button on phones); Templates, Assets and Brand kits no longer show it.
 - Verified: 210 unit tests (new: `src/document/mediaFrames.test.ts`), new `tests/e2e-media.mjs`

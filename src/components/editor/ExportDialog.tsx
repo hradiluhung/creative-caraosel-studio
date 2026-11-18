@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleCheck, Film } from "lucide-react";
+import { CircleCheck, Coffee, Film } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   downloadBlob,
@@ -18,6 +18,7 @@ import { FORMAT_INFO, zipFileName, type ImageFormat } from "@/export/naming";
 import type { ImageStore } from "@/render/resources";
 import { useEditorStore } from "@/store/editorStore";
 import { useObjectUrl } from "@/lib/useObjectUrl";
+import { SUPPORT_PLATFORM, SUPPORT_URL } from "@/lib/support";
 import { formatBytes } from "@/persistence/libraryModel";
 import { Button, Dialog, Label, Segmented, Slider } from "../ui/primitives";
 
@@ -120,6 +121,22 @@ function ExportSuccess({
       <button type="button" onClick={onAgain} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
         Export again with other settings
       </button>
+
+      {SUPPORT_URL && (
+        <div className="flex items-center gap-3 rounded-md border border-line bg-sunken px-3 py-2.5" data-testid="support-card">
+          <Coffee className="h-5 w-5 shrink-0 text-muted" aria-hidden />
+          <p className="min-w-0 flex-1 text-xs text-muted">This app is free. If it helped you, you can buy me a coffee.</p>
+          <a
+            href={SUPPORT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-bg"
+            data-testid="support-link"
+          >
+            Support on {SUPPORT_PLATFORM}
+          </a>
+        </div>
+      )}
     </div>
   );
 }

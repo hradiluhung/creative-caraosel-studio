@@ -104,6 +104,7 @@ const runExport = async () => {
   ]);
   const file = await nextDownload();
   const doneText = await page.$eval('[data-testid="export-done"]', (n) => n.textContent);
+  globalThis.__support ??= await page.$eval('[data-testid="support-link"]', (a) => ({ href: a.href, target: a.target, rel: a.rel })).catch(() => null);
   await clickText("Continue editing");
   return { ...file, doneText };
 };
@@ -376,6 +377,8 @@ try {
   const twoSound = await loudness(two.buf, [[0.3, 1.7]]);
   ok("a file whose first sound track cannot be decoded still exports with sound", hasBox(two.buf, "mp4a") && twoSound[0] > 0.02, twoSound[0].toFixed(4));
 
+  const sup = globalThis.__support;
+  ok("the export success screen links to the support page in a new tab", sup && sup.href === "https://teer.id/hradiluhung" && sup.target === "_blank" && sup.rel.includes("noopener"), JSON.stringify(sup));
   ok("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (e) {
   console.error("ABORTED:", e.message?.split("\n")[0]);
